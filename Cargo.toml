@@ -8,6 +8,8 @@ repository = "https://github.com/tishlang/tish-floem"
 
 [dependencies]
 floem = "0.2"
+floem-winit = "0.29.5"
+lapce-xi-rope = "0.3.2"
 # Sibling checkout: `tish` and `tish-floem` next to each other (adjust paths if your layout differs).
 tishlang_core = { path = "../tish/crates/tish_core" }
 tishlang_ui = { path = "../tish/crates/tish_ui", default-features = false, features = ["runtime"] }

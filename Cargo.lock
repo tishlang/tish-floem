@@ -2947,6 +2947,8 @@ name = "tishlang_floem"
 version = "0.1.0"
 dependencies = [
  "floem",
+ "floem-winit",
+ "lapce-xi-rope",
  "tishlang_core",
  "tishlang_ui",
 ]

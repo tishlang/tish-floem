@@ -7,10 +7,14 @@ import { floem } from "tish:floem"
 
 fn App() {
   return (
-    <>
-      <text>{"Floem + Tish"}</text>
-      <text>{"JSX → tishlang_ui → FloemHost (vnode tree as debug text for now)"}</text>
-    </>
+    <vstack appearance="system" fillHeight={true}>
+      <h1>Floem + Tish</h1>
+      <p>JSX is defined here; `floem.run` maps the vnode tree to Floem views.</p>
+      <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
+        <span style={{ color: "#618cff", fontWeight: "bold" }}>div/span</span>
+        <p>`style` is a string attribute or an object, like React.</p>
+      </div>
+    </vstack>
   )
 }
 

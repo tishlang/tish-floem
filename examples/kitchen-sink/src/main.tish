@@ -1,95 +1,158 @@
-// Floem kitchen sink: styled panels + stacks, button, inputs, checkbox, slider, toggle, radiogroup, scroll.
-// Run: npm run dev (here) or npm run dev:kitchen-sink from repo root.
+// Kitchen sink: UI is entirely Tish/JSX; the Floem host maps tags to views (`floem.run` like hello-floem).
+// Note: native JSX lowering currently does not close over `useState` bindings inside the same `fn` body;
+// this demo uses a static layout and literal appearance. See tishlang_ui `jsx::emit_jsx_rust` + codegen.
+//
+// Run: npm run dev:kitchen-sink from repo root.
 
 import { floem } from "tish:floem"
 
 fn App() {
   return (
-    <>
-      <text variant="heading">{"Layout"}</text>
-      <caption>{"Horizontal row with flex spacer; vertical stacks use gaps and full width."}</caption>
-      <panel>
-        <heading>{"Row"}</heading>
-        <hstack>
-          <text>{"Left"}</text>
-          <spacer />
-          <text>{"Right"}</text>
-        </hstack>
-        <divider />
-        <heading>{"Column"}</heading>
-        <vstack>
-          <text>{"Row A"}</text>
-          <text>{"Row B"}</text>
-          <text>{"Row C"}</text>
+    <hstack appearance="system" flexGrow={1} minHeight={0} fillHeight={true}>
+      <themebox zone="sidebar" appearance="system" width={200} fillHeight={true}>
+        <vstack fillHeight={true} appearance="system">
+          <h1>Kitchen sink</h1>
+          <caption>TOC (static)</caption>
+          <caption>Overview</caption>
+          <caption>Typography</caption>
+          <caption>Buttons</caption>
+          <caption>Inputs</caption>
+          <caption>Editor</caption>
+          <caption>Controls</caption>
+          <caption>Lists & tabs</caption>
+          <caption>Dropdown</caption>
+          <caption>Media</caption>
         </vstack>
-      </panel>
+      </themebox>
+      <scroll variant="fill" appearance="system">
+        <vstack appearance="system">
+          <themebox zone="header" appearance="system">
+            <h1>Tish + Floem</h1>
+            <p muted={true}>
+              Theme: wire appearance props (e.g. system) until native JSX + hooks scoping is extended.
+            </p>
+          </themebox>
 
-      <text variant="heading">{"Actions & inputs"}</text>
-      <panel>
-        <caption>{"Primary button logs to the native console."}</caption>
-        <button onClick={() => console.log("Primary clicked")}>
-          <text>{"Primary action"}</text>
-        </button>
-        <divider />
-        <caption>{"Checkbox, text field, slider, toggle"}</caption>
-        <hstack>
-          <checkbox>
-            <text>{"Subscribe"}</text>
-          </checkbox>
-        </hstack>
-        <textinput placeholder={"Type here…"} value={""} />
-        <hstack>
-          <text>{"Volume"}</text>
-          <slider value={35} />
-        </hstack>
-        <hstack>
-          <text>{"Notifications"}</text>
-          <toggle />
-        </hstack>
-      </panel>
+          <h2>Overview</h2>
+          <panel appearance="system">
+            <p>JSX is authored here; tishlang_floem maps intrinsics to Floem. Upstream examples: https://github.com/lapce/floem/tree/main/examples</p>
+          </panel>
 
-      <text variant="heading">{"Radio group"}</text>
-      <panel>
-        <radiogroup>
-          <radio value="1">
-            <text>{"Option A"}</text>
-          </radio>
-          <radio value="2">
-            <text>{"Option B"}</text>
-          </radio>
-          <radio value="3">
-            <text>{"Option C"}</text>
-          </radio>
-        </radiogroup>
-      </panel>
+          <h2>Typography</h2>
+          <panel appearance="system">
+            <p>Body</p>
+            <p muted={true}>Muted</p>
+            <richtext />
+          </panel>
 
-      <text variant="heading">{"Scroll"}</text>
-      <caption>{"Tall content inside a fixed-height scroll pane (minHeight tuned in host)."}</caption>
-      <scroll minHeight={420}>
-        <vstack>
-          <text>{"Line 01 — scroll me"}</text>
-          <text>{"Line 02"}</text>
-          <text>{"Line 03"}</text>
-          <text>{"Line 04"}</text>
-          <text>{"Line 05"}</text>
-          <text>{"Line 06"}</text>
-          <text>{"Line 07"}</text>
-          <text>{"Line 08"}</text>
-          <text>{"Line 09"}</text>
-          <text>{"Line 10"}</text>
-          <text>{"Line 11"}</text>
-          <text>{"Line 12"}</text>
-          <text>{"Line 13"}</text>
-          <text>{"Line 14"}</text>
-          <text>{"Line 15"}</text>
-          <text>{"Line 16"}</text>
-          <text>{"Line 17"}</text>
-          <text>{"Line 18"}</text>
-          <text>{"Line 19"}</text>
-          <text>{"Line 20 — end"}</text>
+          <h2>Buttons</h2>
+          <panel appearance="system">
+            <hstack appearance="system">
+              <button appearance="system" onClick={() => console.log("clicked")}>
+                Primary
+              </button>
+              <button variant="ghost" appearance="system">
+                Ghost
+              </button>
+            </hstack>
+            <toggle />
+          </panel>
+
+          <h2>Text input</h2>
+          <panel appearance="system">
+            <textinput placeholder="Type…" value="" appearance="system" />
+          </panel>
+
+          <h2>Editor</h2>
+          <panel appearance="system">
+            <texteditor appearance="system" />
+          </panel>
+
+          <h2>Controls</h2>
+          <panel appearance="system">
+            <checkbox>
+              Subscribe
+            </checkbox>
+            <radiogroup>
+              <radio value="1">
+                A
+              </radio>
+              <radio value="2">
+                B
+              </radio>
+            </radiogroup>
+            <hstack appearance="system">
+              Volume
+              <slider value={40} />
+            </hstack>
+            <hstack appearance="system">
+              Notify
+              <toggle />
+            </hstack>
+          </panel>
+
+          <h2>Lists & tabs</h2>
+          <panel appearance="system">
+            <list>
+              <p>Row A</p>
+              <p>Row B</p>
+            </list>
+            <caption>Tab panels use tabpanel + matching active/id props.</caption>
+            <tabpanel active={0} id={0} appearance="system">
+              <p>Tab 1 content</p>
+            </tabpanel>
+            <tabpanel active={0} id={1} appearance="system">
+              <p>Tab 2 (hidden while active=0)</p>
+            </tabpanel>
+          </panel>
+
+          <h2>Dropdown & layout</h2>
+          <panel appearance="system">
+            <dropdown value={20} appearance="system">
+              <option value="10">
+                Ten
+              </option>
+              <option value="20">
+                Twenty
+              </option>
+              <option value="30">
+                Thirty
+              </option>
+            </dropdown>
+            <tooltip tip="Tooltip" appearance="system">
+              <button variant="ghost" appearance="system">
+                Hover
+              </button>
+            </tooltip>
+            <clip appearance="system">
+              Clipped
+            </clip>
+            <hstack appearance="system">
+              Left
+              <spacer />
+              Right
+            </hstack>
+          </panel>
+
+          <h2>Scroll sample</h2>
+          <scroll minHeight={120} appearance="system">
+            <vstack appearance="system">
+              <p>Line 1</p>
+              <p>Line 2</p>
+              <p>Line 3</p>
+              <p>Line 4</p>
+              <p>Line 5</p>
+            </vstack>
+          </scroll>
+
+          <h2>Media</h2>
+          <panel appearance="system">
+            <svgview />
+            <imgdemo />
+          </panel>
         </vstack>
       </scroll>
-    </>
+    </hstack>
   )
 }
 

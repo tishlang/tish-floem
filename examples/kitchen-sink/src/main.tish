@@ -1,0 +1,99 @@
+// Floem kitchen sink: styled panels + stacks, button, inputs, checkbox, slider, toggle, radiogroup, scroll.
+// Run: npm run dev (here) or npm run dev:kitchen-sink from repo root.
+
+import { floem } from "tish:floem"
+
+fn App() {
+  return (
+    <>
+      <text variant="heading">{"Layout"}</text>
+      <caption>{"Horizontal row with flex spacer; vertical stacks use gaps and full width."}</caption>
+      <panel>
+        <heading>{"Row"}</heading>
+        <hstack>
+          <text>{"Left"}</text>
+          <spacer />
+          <text>{"Right"}</text>
+        </hstack>
+        <divider />
+        <heading>{"Column"}</heading>
+        <vstack>
+          <text>{"Row A"}</text>
+          <text>{"Row B"}</text>
+          <text>{"Row C"}</text>
+        </vstack>
+      </panel>
+
+      <text variant="heading">{"Actions & inputs"}</text>
+      <panel>
+        <caption>{"Primary button logs to the native console."}</caption>
+        <button onClick={() => console.log("Primary clicked")}>
+          <text>{"Primary action"}</text>
+        </button>
+        <divider />
+        <caption>{"Checkbox, text field, slider, toggle"}</caption>
+        <hstack>
+          <checkbox>
+            <text>{"Subscribe"}</text>
+          </checkbox>
+        </hstack>
+        <textinput placeholder={"Type here…"} value={""} />
+        <hstack>
+          <text>{"Volume"}</text>
+          <slider value={35} />
+        </hstack>
+        <hstack>
+          <text>{"Notifications"}</text>
+          <toggle />
+        </hstack>
+      </panel>
+
+      <text variant="heading">{"Radio group"}</text>
+      <panel>
+        <radiogroup>
+          <radio value="1">
+            <text>{"Option A"}</text>
+          </radio>
+          <radio value="2">
+            <text>{"Option B"}</text>
+          </radio>
+          <radio value="3">
+            <text>{"Option C"}</text>
+          </radio>
+        </radiogroup>
+      </panel>
+
+      <text variant="heading">{"Scroll"}</text>
+      <caption>{"Tall content inside a fixed-height scroll pane (minHeight tuned in host)."}</caption>
+      <scroll minHeight={420}>
+        <vstack>
+          <text>{"Line 01 — scroll me"}</text>
+          <text>{"Line 02"}</text>
+          <text>{"Line 03"}</text>
+          <text>{"Line 04"}</text>
+          <text>{"Line 05"}</text>
+          <text>{"Line 06"}</text>
+          <text>{"Line 07"}</text>
+          <text>{"Line 08"}</text>
+          <text>{"Line 09"}</text>
+          <text>{"Line 10"}</text>
+          <text>{"Line 11"}</text>
+          <text>{"Line 12"}</text>
+          <text>{"Line 13"}</text>
+          <text>{"Line 14"}</text>
+          <text>{"Line 15"}</text>
+          <text>{"Line 16"}</text>
+          <text>{"Line 17"}</text>
+          <text>{"Line 18"}</text>
+          <text>{"Line 19"}</text>
+          <text>{"Line 20 — end"}</text>
+        </vstack>
+      </scroll>
+    </>
+  )
+}
+
+floem.run(() => {
+  createRoot(null).render(App)
+  return null
+})

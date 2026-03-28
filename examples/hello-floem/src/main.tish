@@ -1,0 +1,21 @@
+// Native Floem window: JSX via tishlang_ui; `import { floem } from "tish:floem"` resolves this repo's package.json.
+//
+// Build (sibling dirs `tish/` and `tish-floem/`): from `tish-floem/` run `npm run dev`, or from
+// `examples/hello-floem/` run `npm run dev` / `npm start` (see package.json scripts).
+
+import { floem } from "tish:floem"
+
+fn App() {
+  return (
+    <>
+      <text>{"Floem + Tish"}</text>
+      <text>{"JSX → tishlang_ui → FloemHost (vnode tree as debug text for now)"}</text>
+    </>
+  )
+}
+
+// Install Floem host, then render once; vnode commits show in the window (debug snapshot for now).
+floem.run(() => {
+  createRoot(null).render(App)
+  return null
+})

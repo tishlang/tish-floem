@@ -1,0 +1,13 @@
+[package]
+name = "tishlang_floem"
+version = "0.1.0"
+edition = "2021"
+description = "Floem native window + tishlang_ui Host for Tish JSX (lives outside the tish repo; no Floem in tish itself)"
+license = "MIT"
+repository = "https://github.com/tishlang/tish-floem"
+
+[dependencies]
+floem = "0.2"
+# Sibling checkout: `tish` and `tish-floem` next to each other (adjust paths if your layout differs).
+tishlang_core = { path = "../tish/crates/tish_core" }
+tishlang_ui = { path = "../tish/crates/tish_ui", default-features = false, features = ["runtime"] }

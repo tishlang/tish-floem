@@ -894,22 +894,28 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 st
             });
             sc.style(move |s| {
-                let mut s = s.width_full().border_radius(8.0);
+                let mut s = s.width_full();
                 if fill {
+                    // Viewport size comes entirely from flex layout: don't let user's `width: 100%`
+                    // or `height: 100%` override flex-grow sizing (causes layout breakage on resize).
                     s = s
                         .height_full()
                         .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .flex_basis(0.0)
                         .min_height(0.0)
                         .min_width(0.0)
                         .border(0.0);
+                    // Only visual frame properties (background, border-radius, …) from user style.
+                    html_css::apply_scroll_viewport_style(s, &scroll_style_outer)
                 } else {
                     s = s
                         .height(220.0)
                         .border(1.0)
                         .border_color(Color::rgb8(210, 210, 220));
+                    // Non-fill: allow full explicit sizing from user style.
+                    html_css::merge_style_from_props(s, &scroll_style_outer)
                 }
-                html_css::merge_style_from_props(s, &scroll_style_outer)
             })
             .into_any()
         }

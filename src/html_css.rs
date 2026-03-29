@@ -129,6 +129,21 @@ pub fn apply_scroll_content_style(s: Style, props: &ObjectMap) -> Style {
     apply_declarations(s, &visual)
 }
 
+/// For a fill-mode scroll VIEWPORT: apply only the visual frame properties that belong on the
+/// outer scroll container (`background`, `border-radius`, `border`, `border-color`). Width,
+/// height, flex, padding, gap, etc. must NOT be applied — fill-mode sizing comes entirely from
+/// flex layout (`flex-grow: 1; flex-basis: 0`), and `width: 100%` or `height: 100%` from user
+/// style would fight that and break the layout on window resize.
+pub fn apply_scroll_viewport_style(s: Style, props: &ObjectMap) -> Style {
+    let decls = style_declarations_from_props(props);
+    let viewport_keys = ["background", "backgroundcolor", "borderradius", "border", "bordercolor", "borderright"];
+    let viewport: Vec<(String, String)> = decls
+        .into_iter()
+        .filter(|(k, _)| viewport_keys.contains(&k.as_str()))
+        .collect();
+    apply_declarations(s, &viewport)
+}
+
 fn scroll_fill_from_decls(decls: &[(String, String)]) -> bool {
     for (key, val) in decls {
         let v = val.trim();

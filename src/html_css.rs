@@ -9,11 +9,12 @@ use floem::text::Weight;
 use floem::unit::{PxPct, PxPctAuto};
 use floem::views::{container, empty, Decorators, StackExt};
 use floem::AnyView;
+use floem::View;
 use floem::IntoView;
 use floem::taffy::style::{AlignItems, Display, FlexDirection, FlexWrap, JustifyContent};
 use tishlang_core::{ObjectMap, Value};
 
-use crate::value_into_any_view;
+use crate::{props_string, register_scroll_anchor, value_into_any_view};
 
 fn norm_key(s: &str) -> String {
     s.chars()
@@ -76,6 +77,87 @@ pub fn style_declarations_from_props(props: &ObjectMap) -> Vec<(String, String)>
         return style_object_pairs(&o.borrow());
     }
     Vec::new()
+}
+
+/// `true` when `style` uses flex growth (`flex: 1`, `flex-grow: 1`, etc.). Hosts use the same rule:
+/// a flex child scroll region should set `flex: 1; min-height: 0` (and often `min-width: 0`) in `style`.
+pub fn scroll_fill_from_style(props: &ObjectMap) -> bool {
+    scroll_fill_from_decls(&style_declarations_from_props(props))
+}
+
+/// Keys that control layout / sizing from the parent's perspective — applied to the outer scroll container.
+/// The inner scrollable content must NOT get these: `height: 100%` or `flex: 1` on content means nothing
+/// overflows and scrolling becomes impossible.
+fn is_layout_sizing_key(k: &str) -> bool {
+    matches!(
+        k,
+        "width"
+            | "height"
+            | "minwidth"
+            | "minheight"
+            | "maxwidth"
+            | "maxheight"
+            | "flex"
+            | "flexgrow"
+            | "flexshrink"
+            | "flexbasis"
+            | "flexdirection"
+            | "flexwrap"
+            | "alignself"
+            | "alignitems"
+            | "justifycontent"
+            | "display"
+            | "gap"
+            | "rowgap"
+            | "columngap"
+            | "margin"
+            | "margintop"
+            | "marginright"
+            | "marginbottom"
+            | "marginleft"
+    )
+}
+
+/// Apply only the visual/spacing declarations (padding, background, color, border, …) to `s`.
+/// Skips all layout/sizing properties so the inner scroll content is free to overflow.
+pub fn apply_scroll_content_style(s: Style, props: &ObjectMap) -> Style {
+    let decls = style_declarations_from_props(props);
+    let visual: Vec<(String, String)> = decls
+        .into_iter()
+        .filter(|(k, _)| !is_layout_sizing_key(k.as_str()))
+        .collect();
+    apply_declarations(s, &visual)
+}
+
+fn scroll_fill_from_decls(decls: &[(String, String)]) -> bool {
+    for (key, val) in decls {
+        let v = val.trim();
+        match key.as_str() {
+            "flexgrow" => {
+                if let Ok(n) = v.parse::<f32>() {
+                    if n > 0.0 {
+                        return true;
+                    }
+                }
+            }
+            "flex" => {
+                if v.eq_ignore_ascii_case("none") {
+                    continue;
+                }
+                let parts: Vec<&str> = v.split_whitespace().collect();
+                let grow = if parts.len() == 1 {
+                    parts[0].parse::<f32>().ok()
+                } else {
+                    parts.first().and_then(|x| x.parse::<f32>().ok())
+                };
+                if grow.map(|g| g > 0.0).unwrap_or(false) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn parse_px_pct_auto(v: &str) -> Option<PxPctAuto> {
@@ -310,6 +392,36 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                     s = s.max_height(d);
                 }
             }
+            "flex" => {
+                let vn = v.trim();
+                if vn.eq_ignore_ascii_case("none") {
+                    s = s.flex_grow(0.0).flex_shrink(0.0);
+                } else {
+                    let parts: Vec<&str> = vn.split_whitespace().collect();
+                    if parts.len() == 1 {
+                        if let Ok(g) = parts[0].parse::<f32>() {
+                            // flex: 1  →  grow 1, shrink 1, basis 0 (scroll/flex layouts)
+                            s = s.flex_grow(g).flex_shrink(1.0).flex_basis(0.0);
+                        }
+                    } else {
+                        let g = parts
+                            .first()
+                            .and_then(|x| x.parse::<f32>().ok())
+                            .unwrap_or(0.0);
+                        let sh = parts
+                            .get(1)
+                            .and_then(|x| x.parse::<f32>().ok())
+                            .unwrap_or(1.0);
+                        s = s.flex_grow(g).flex_shrink(sh);
+                        if let Some(b) = parts.get(2) {
+                            let b = b.trim();
+                            if b == "0" || b == "0%" || b.starts_with("0px") {
+                                s = s.flex_basis(0.0);
+                            }
+                        }
+                    }
+                }
+            }
             "flexgrow" => {
                 if let Ok(n) = v.parse::<f32>() {
                     s = s.flex_grow(n);
@@ -318,6 +430,33 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
             "flexshrink" => {
                 if let Ok(n) = v.parse::<f32>() {
                     s = s.flex_shrink(n);
+                }
+            }
+            "alignself" => {
+                let vl = v.to_ascii_lowercase().replace(' ', "").replace('-', "");
+                let ai = match vl.as_str() {
+                    "stretch" => Some(AlignItems::Stretch),
+                    "flexstart" | "start" => Some(AlignItems::FlexStart),
+                    "center" => Some(AlignItems::Center),
+                    "flexend" | "end" => Some(AlignItems::FlexEnd),
+                    "baseline" => Some(AlignItems::Baseline),
+                    _ => None,
+                };
+                if let Some(a) = ai {
+                    s = s.align_self(Some(a));
+                }
+            }
+            "bordercolor" => {
+                if let Some(c) = parse_color(v) {
+                    s = s.border_color(c);
+                }
+            }
+            "borderright" => {
+                if let Some(tok) = v.split_whitespace().next() {
+                    let t = tok.trim_end_matches("px").trim();
+                    if let Ok(p) = t.parse::<f32>() {
+                        s = s.border_right(p);
+                    }
                 }
             }
             "borderradius" => {
@@ -397,17 +536,6 @@ fn display_is_none(decls: &[(String, String)]) -> bool {
     })
 }
 
-fn props_bool_element(props: &ObjectMap, keys: &[&str]) -> bool {
-    for k in keys {
-        match props.get(*k) {
-            Some(Value::Bool(b)) => return *b,
-            Some(Value::Number(n)) => return *n != 0.0,
-            _ => {}
-        }
-    }
-    false
-}
-
 /// `div` / `span` / `p` with HTML-like defaults and optional `style` string or object.
 pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let decls = style_declarations_from_props(props);
@@ -415,7 +543,6 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
         return container(empty()).style(|s| s.hide()).into_any();
     }
 
-    let muted = props_bool_element(props, &["muted", "dim"]);
     let tag_l = tag.to_ascii_lowercase();
     let default_dir = match tag_l.as_str() {
         "span" => FlexDirection::Row,
@@ -423,6 +550,7 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
     };
 
     let direction = direction_from_decls(&decls, default_dir);
+    let anchor_key = props_string(props, &["id"]);
 
     let views: Vec<_> = children
         .into_iter()
@@ -431,20 +559,29 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
 
     let stack = views.stack(direction);
 
-    stack
-        .style(move |s| {
-            let mut s = s.display(Display::Flex);
-            if tag_l != "span" {
-                s = s.width_full();
-            }
-            if tag_l == "p" {
-                s = s.margin_bottom(8.0);
-            }
-            s = apply_declarations(s, &decls);
-            if muted {
-                s = s.color(Color::GRAY);
-            }
-            s
-        })
-        .into_any()
+    let body = stack.style(move |s| {
+        let mut s = s.display(Display::Flex);
+        s = apply_declarations(s, &decls);
+        // Do not force width: 100% when the author uses flex (row children need intrinsic width).
+        let sizing_from_style = decls.iter().any(|(k, _)| {
+            matches!(
+                k.as_str(),
+                "width" | "flex" | "flexgrow" | "minwidth" | "maxwidth"
+            )
+        });
+        if tag_l != "span" && !sizing_from_style {
+            s = s.width_full();
+        }
+        if tag_l == "p" {
+            s = s.margin_bottom(8.0);
+        }
+        s
+    });
+    if let Some(key) = anchor_key {
+        let c = container(body).style(|s| s.width_full());
+        register_scroll_anchor(key, c.id());
+        c.into_any()
+    } else {
+        body.into_any()
+    }
 }

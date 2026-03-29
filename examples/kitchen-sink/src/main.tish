@@ -1,75 +1,103 @@
 // Kitchen sink: UI is entirely Tish/JSX; the Floem host maps tags to views (`floem.run` like hello-floem).
-// Note: native JSX lowering currently does not close over `useState` bindings inside the same `fn` body;
-// this demo uses a static layout and literal appearance. See tishlang_ui `jsx::emit_jsx_rust` + codegen.
+// Layout: `<div style="...">` flex. Scroll regions that should fill use `style` with `flex: 1; min-height: 0`
+// (same rule a DOM backend would use). Anchor navigation uses DOM/CSSOM-style APIs: `document.getElementById(id).scrollIntoView()`
+// or `window.location.assign("#id")` — not Floem-specific helpers.
+// Appearance defaults to `system` (follow OS); wrap with `<ThemeProvider value="dark">` (or `appearance="light"`) to override.
 //
 // Run: npm run dev:kitchen-sink from repo root.
 
-import { floem } from "tish:floem"
+import { floem, document, ThemeProvider } from "tish:floem"
 
 fn App() {
   return (
-    <hstack appearance="system" flexGrow={1} minHeight={0} fillHeight={true}>
-      <themebox zone="sidebar" appearance="system" width={200} fillHeight={true}>
-        <vstack fillHeight={true} appearance="system">
-          <h1>Kitchen sink</h1>
-          <caption>TOC (static)</caption>
-          <caption>Overview</caption>
-          <caption>Typography</caption>
-          <caption>Buttons</caption>
-          <caption>Inputs</caption>
-          <caption>Editor</caption>
-          <caption>Controls</caption>
-          <caption>Lists & tabs</caption>
-          <caption>Dropdown</caption>
-          <caption>Media</caption>
-        </vstack>
-      </themebox>
-      <scroll variant="fill" appearance="system">
-        <vstack appearance="system">
-          <themebox zone="header" appearance="system">
+    <ThemeProvider>
+    <div style="display: flex; flex-direction: row; flex: 1; min-height: 0; width: 100%; height: 100%; align-items: stretch">
+      <div style="display: flex; flex-direction: column; width: 200px; min-width: 0; flex-shrink: 0; min-height: 0; height: 100%; background: #171a21; border-color: #3a404d; border-right: 1px">
+        <scroll style="flex: 1; min-height: 0; min-width: 0; width: 100%; height: 100%; padding: 12px; background: #171a21">
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: stretch; width: 100%">
+            <h1>Kitchen sink</h1>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("top").scrollIntoView()}>
+              TOC (static)
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("overview").scrollIntoView()}>
+              Overview
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("typography").scrollIntoView()}>
+              Typography
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("buttons").scrollIntoView()}>
+              Buttons
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("inputs").scrollIntoView()}>
+              Inputs
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("editor").scrollIntoView()}>
+              Editor
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("controls").scrollIntoView()}>
+              Controls
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("lists").scrollIntoView()}>
+              Lists & tabs
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("dropdown").scrollIntoView()}>
+              Dropdown
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("scroll").scrollIntoView()}>
+              Scroll sample
+            </button>
+            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("media").scrollIntoView()}>
+              Media
+            </button>
+          </div>
+        </scroll>
+      </div>
+      <scroll style="flex: 1; min-height: 0; min-width: 0; width: 100%; height: 100%" scrollRoot={true}>
+        <div style="display: flex; flex-direction: column; gap: 12px; width: 100%; min-height: 0">
+          <div id="top" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #3a404d; background: #14161c; width: 100%">
             <h1>Tish + Floem</h1>
-            <p muted={true}>
-              Theme: wire appearance props (e.g. system) until native JSX + hooks scoping is extended.
+            <p style="color: #a8b0bd; margin: 0">
+              Theme: defaults to system (OS); use ThemeProvider to set light/dark. Omit redundant appearance props.
             </p>
-          </themebox>
+          </div>
 
-          <h2>Overview</h2>
-          <panel appearance="system">
+          <h2 id="overview">Overview</h2>
+          <panel>
             <p>JSX is authored here; tishlang_floem maps intrinsics to Floem. Upstream examples: https://github.com/lapce/floem/tree/main/examples</p>
           </panel>
 
-          <h2>Typography</h2>
-          <panel appearance="system">
+          <h2 id="typography">Typography</h2>
+          <panel>
             <p>Body</p>
-            <p muted={true}>Muted</p>
+            <p style="color: #6b7280">Muted</p>
             <richtext />
           </panel>
 
-          <h2>Buttons</h2>
-          <panel appearance="system">
-            <hstack appearance="system">
-              <button appearance="system" onClick={() => console.log("clicked")}>
+          <h2 id="buttons">Buttons</h2>
+          <panel>
+            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap">
+              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: #3b82f6; color: #fff" onClick={() => console.log("clicked")}>
                 Primary
               </button>
-              <button variant="ghost" appearance="system">
+              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
                 Ghost
               </button>
-            </hstack>
+            </div>
             <toggle />
           </panel>
 
-          <h2>Text input</h2>
-          <panel appearance="system">
-            <textinput placeholder="Type…" value="" appearance="system" />
+          <h2 id="inputs">Text input</h2>
+          <panel>
+            <textinput placeholder="Type…" value="" />
           </panel>
 
-          <h2>Editor</h2>
-          <panel appearance="system">
-            <texteditor appearance="system" />
+          <h2 id="editor">Editor</h2>
+          <panel>
+            <texteditor />
           </panel>
 
-          <h2>Controls</h2>
-          <panel appearance="system">
+          <h2 id="controls">Controls</h2>
+          <panel>
             <checkbox>
               Subscribe
             </checkbox>
@@ -81,34 +109,34 @@ fn App() {
                 B
               </radio>
             </radiogroup>
-            <hstack appearance="system">
+            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
               Volume
               <slider value={40} />
-            </hstack>
-            <hstack appearance="system">
+            </div>
+            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
               Notify
               <toggle />
-            </hstack>
+            </div>
           </panel>
 
-          <h2>Lists & tabs</h2>
-          <panel appearance="system">
+          <h2 id="lists">Lists & tabs</h2>
+          <panel>
             <list>
               <p>Row A</p>
               <p>Row B</p>
             </list>
             <caption>Tab panels use tabpanel + matching active/id props.</caption>
-            <tabpanel active={0} id={0} appearance="system">
+            <tabpanel active={0} id={0}>
               <p>Tab 1 content</p>
             </tabpanel>
-            <tabpanel active={0} id={1} appearance="system">
+            <tabpanel active={0} id={1}>
               <p>Tab 2 (hidden while active=0)</p>
             </tabpanel>
           </panel>
 
-          <h2>Dropdown & layout</h2>
-          <panel appearance="system">
-            <dropdown value={20} appearance="system">
+          <h2 id="dropdown">Dropdown & layout</h2>
+          <panel>
+            <dropdown value={20}>
               <option value="10">
                 Ten
               </option>
@@ -119,40 +147,41 @@ fn App() {
                 Thirty
               </option>
             </dropdown>
-            <tooltip tip="Tooltip" appearance="system">
-              <button variant="ghost" appearance="system">
+            <tooltip tip="Tooltip">
+              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
                 Hover
               </button>
             </tooltip>
-            <clip appearance="system">
+            <clip>
               Clipped
             </clip>
-            <hstack appearance="system">
+            <div style="display: flex; flex-direction: row; width: 100%; align-items: center">
               Left
               <spacer />
               Right
-            </hstack>
+            </div>
           </panel>
 
-          <h2>Scroll sample</h2>
-          <scroll minHeight={120} appearance="system">
-            <vstack appearance="system">
+          <h2 id="scroll">Scroll sample</h2>
+          <scroll style="min-height: 120px; width: 100%; border: 1px solid #d4d7e3; border-radius: 8px">
+            <div style="display: flex; flex-direction: column; gap: 8px; padding: 8px">
               <p>Line 1</p>
               <p>Line 2</p>
               <p>Line 3</p>
               <p>Line 4</p>
               <p>Line 5</p>
-            </vstack>
+            </div>
           </scroll>
 
-          <h2>Media</h2>
-          <panel appearance="system">
+          <h2 id="media">Media</h2>
+          <panel>
             <svgview />
             <imgdemo />
           </panel>
-        </vstack>
+        </div>
       </scroll>
-    </hstack>
+    </div>
+    </ThemeProvider>
   )
 }
 

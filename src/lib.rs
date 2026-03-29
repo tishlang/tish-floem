@@ -1,20 +1,34 @@
 //! Floem window entry for Tish: installs a [`tishlang_ui::Host`] that maps committed vnodes to Floem views.
 //!
-//! UI is **defined in Tish/JSX**; this crate only maps intrinsics to Floem widgets.
+//! UI is **defined in Tish/JSX**; this crate maps intrinsics to Floem. Where possible, vnode props match
+//! what a DOM backend would accept (`style` strings/objects, `id`, etc.) so the same JSX can target
+//! multiple hosts; Floem-specific tuning stays inside this adapter.
+//!
+//! ## Resource model (scalability)
+//! Each commit builds a **full** Floem subtree for the vnode tree: scrolling or `hide()` does **not** unmount
+//! off-screen views. For large UIs, reduce what you mount (routing / conditional JSX when state is available),
+//! use the `tabpanel` intrinsic so inactive panels skip building children (see `tabpanel_view`),
+//! and prefer Floem’s virtualized primitives for huge lists (not yet wired as a Tish intrinsic).
+//! Baseline RAM is dominated by Floem, GPU, and fonts—not the Tish runtime.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use floem::action;
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::Key;
 use floem::peniko::Color;
+use floem::peniko::kurbo::Point;
 use floem::prelude::*;
 use floem::text::{Attrs, AttrsList, TextLayout, Weight};
 use floem::views::dropdown::Dropdown;
 use floem::views::editor::text::{default_dark_color, default_light_theme};
 use floem::views::slider::Slider;
 use floem::views::RadioButton;
+use floem::taffy::style::AlignItems;
+use floem::ViewId;
 use floem::AnyView;
 use floem_winit::window::Theme;
 use lapce_xi_rope::Rope;
@@ -26,6 +40,33 @@ mod html_css;
 // Latest OS dark-mode hint from the window (`None` until the first `ThemeChanged`).
 thread_local! {
     static OS_THEME_IS_DARK: RefCell<Option<RwSignal<Option<bool>>>> = const { RefCell::new(None) };
+}
+
+// `window.scrollTo` / pixel scroll target for the vnode marked `scrollRoot` (CSSOM view `Window`).
+thread_local! {
+    static SCROLL_ROOT_PIXEL: RefCell<Option<RwSignal<Option<Point>>>> = const { RefCell::new(None) };
+}
+
+thread_local! {
+    static SCROLL_ANCHOR_VIEWS: RefCell<HashMap<String, ViewId>> = RefCell::new(HashMap::new());
+}
+
+thread_local! {
+    static THEME_APPEARANCE_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn register_scroll_anchor(key: String, id: ViewId) {
+    SCROLL_ANCHOR_VIEWS.with(|m| {
+        m.borrow_mut().insert(key, id);
+    });
+}
+
+fn clear_scroll_anchors() {
+    SCROLL_ANCHOR_VIEWS.with(|m| m.borrow_mut().clear());
+}
+
+fn clear_theme_appearance_stack() {
+    THEME_APPEARANCE_STACK.with(|s| s.borrow_mut().clear());
 }
 
 /// Holds the latest root vnode; [`FloemHost::commit_root`] updates it so the UI can react.
@@ -41,6 +82,8 @@ impl FloemHost {
 
 impl Host for FloemHost {
     fn commit_root(&mut self, vnode: &Value) {
+        clear_scroll_anchors();
+        clear_theme_appearance_stack();
         self.root.set(vnode.clone());
     }
 }
@@ -66,13 +109,30 @@ fn is_fragment_object(obj: &ObjectMap) -> bool {
     )
 }
 
-fn props_string(props: &ObjectMap, keys: &[&str]) -> Option<String> {
+pub(crate) fn props_string(props: &ObjectMap, keys: &[&str]) -> Option<String> {
     for k in keys {
         if let Some(Value::String(s)) = props.get(*k) {
             return Some(s.as_ref().to_string());
         }
     }
     None
+}
+
+/// `appearance` / `theme` on the vnode, else the innermost [`ThemeProvider`] value, else `"system"`.
+pub(crate) fn resolve_appearance(props: &ObjectMap) -> String {
+    props_string(props, &["appearance", "theme"])
+        .or_else(|| THEME_APPEARANCE_STACK.with(|st| st.borrow().last().cloned()))
+        .unwrap_or_else(|| "system".to_string())
+}
+
+fn theme_provider_resolved_value(props: &ObjectMap) -> String {
+    props_string(props, &["appearance", "theme"])
+        .or_else(|| match props.get("value") {
+            Some(Value::String(s)) => Some(s.as_ref().to_string()),
+            _ => None,
+        })
+        .or_else(|| THEME_APPEARANCE_STACK.with(|st| st.borrow().last().cloned()))
+        .unwrap_or_else(|| "system".to_string())
 }
 
 fn props_f64(props: &ObjectMap, keys: &[&str], default: f64) -> f64 {
@@ -101,9 +161,7 @@ struct ThemePalette {
     fg: Color,
     sidebar: Color,
     border: Color,
-    accent: Color,
     panel: Color,
-    ghost_hover: Color,
 }
 
 fn palette_for_dark(dark: bool) -> ThemePalette {
@@ -113,9 +171,7 @@ fn palette_for_dark(dark: bool) -> ThemePalette {
             fg: Color::rgb8(0xe6, 0xe8, 0xef),
             sidebar: Color::rgb8(0x17, 0x1a, 0x21),
             border: Color::rgb8(0x3a, 0x40, 0x4d),
-            accent: Color::rgb8(0x61, 0x8c, 0xff),
             panel: Color::rgb8(0x25, 0x2a, 0x34),
-            ghost_hover: Color::rgb8(0x2c, 0x33, 0x3f),
         }
     } else {
         ThemePalette {
@@ -123,9 +179,7 @@ fn palette_for_dark(dark: bool) -> ThemePalette {
             fg: Color::rgb8(0x22, 0x24, 0x2d),
             sidebar: Color::rgb8(0xef, 0xf0, 0xf6),
             border: Color::rgb8(0xd4, 0xd7, 0xe3),
-            accent: Color::rgb8(0x3b, 0x82, 0xf6),
             panel: Color::WHITE,
-            ghost_hover: Color::rgb8(0xe8, 0xea, 0xf2),
         }
     }
 }
@@ -156,6 +210,7 @@ enum Intrinsic {
     Radiogroup,
     Container,
     Themebox,
+    ThemeProvider,
     Dropdown,
     Texteditor,
     Tooltip,
@@ -184,6 +239,7 @@ fn intrinsic_for_tag(tag: &str) -> Option<Intrinsic> {
         "radiogroup" | "radio-group" => Some(Intrinsic::Radiogroup),
         "container" | "box" => Some(Intrinsic::Container),
         "themebox" => Some(Intrinsic::Themebox),
+        "themeprovider" => Some(Intrinsic::ThemeProvider),
         "dropdown" => Some(Intrinsic::Dropdown),
         "texteditor" | "codeeditor" => Some(Intrinsic::Texteditor),
         "tooltip" => Some(Intrinsic::Tooltip),
@@ -239,15 +295,14 @@ fn button_caption(children: &[Value], props: &ObjectMap) -> String {
     props_string(props, &["label", "title", "text"]).unwrap_or_else(|| "Button".to_string())
 }
 
-/// Styled `<text>` for cases that need props (`variant`, `muted`) without a block tag.
-/// Prefer raw JSX text children or `<p>` / `<span>` (see `html_css::html_element_view`); strings map to labels in `value_into_any_view`.
-/// Use `<h1>`…`<h6>` for headings. Props: `variant` (caption|body), optional `muted` (bool).
+/// Styled `<text>` for cases that need a `variant` without a block tag.
+/// Prefer `<p>` / `<span style="...">` (see `html_css::html_element_view`); strings map to labels in `value_into_any_view`.
+/// Use `<h1>`…`<h6>` for headings. Optional `variant`: caption|small|subtitle (smaller gray); otherwise body with `style` for color/size.
 fn text_view(children: &[Value], props: &ObjectMap) -> floem::AnyView {
     let text = collect_visible_text(children);
     let variant = props_string(props, &["variant", "size"])
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let muted = props_bool(props, &["muted", "dim"]);
     let style_props = props.clone();
     label(move || text.clone())
         .style(move |s| {
@@ -258,9 +313,6 @@ fn text_view(children: &[Value], props: &ObjectMap) -> floem::AnyView {
                 }
                 _ => {
                     s = s.font_size(14.0).line_height(1.35);
-                    if muted {
-                        s = s.color(Color::GRAY);
-                    }
                 }
             }
             html_css::merge_style_from_props(s, &style_props)
@@ -330,9 +382,11 @@ fn heading_level_from_tag(tag: &str) -> Option<u8> {
 }
 
 /// Semantic headings: `<h1>`…`<h6>`, plus legacy `<title>` (→ h1) and `<heading>` (→ h2).
+/// Optional `id` registers an element id for `document.getElementById(..).scrollIntoView()` (DOM-compatible).
 fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floem::AnyView {
     let text = collect_visible_text(&children);
     let style_props = props.clone();
+    let anchor_key = props_string(props, &["id"]);
     let level = level.clamp(1, 6);
     let (size, margin_bottom) = match level {
         1 => (22.0_f32, 8.0_f32),
@@ -342,17 +396,22 @@ fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floe
         5 => (14.0, 2.0),
         _ => (13.0, 2.0),
     };
-    label(move || text.clone())
-        .style(move |s| {
-            let s = s
-                .font_size(size)
-                .font_bold()
-                .margin_bottom(margin_bottom)
-                .line_height(1.25)
-                .width_full();
-            html_css::merge_style_from_props(s, &style_props)
-        })
-        .into_any()
+    let lbl = label(move || text.clone()).style(move |s| {
+        let s = s
+            .font_size(size)
+            .font_bold()
+            .margin_bottom(margin_bottom)
+            .line_height(1.25)
+            .width_full();
+        html_css::merge_style_from_props(s, &style_props)
+    });
+    if let Some(key) = anchor_key {
+        let c = container(lbl).style(|s| s.width_full());
+        register_scroll_anchor(key, c.id());
+        c.into_any()
+    } else {
+        lbl.into_any()
+    }
 }
 
 fn caption_view(children: &[Value]) -> floem::AnyView {
@@ -395,8 +454,9 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let zone = props_string(props, &["zone", "role"])
         .unwrap_or_else(|| "main".to_string())
         .to_ascii_lowercase();
-    let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+    let appearance = resolve_appearance(props);
     let width_px = props_f64(props, &["width", "widthPx"], 0.0);
+    let anchor_key = props_string(props, &["id"]);
 
     let body: AnyView = if children.len() == 1 {
         value_into_any_view(children.into_iter().next().unwrap())
@@ -404,7 +464,7 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
         v_stack_dyn_children(children).into_any()
     };
 
-    container(body).style(move |s| {
+    let c = container(body).style(move |s| {
         let dark = effective_dark_from_appearance(appearance.as_str());
         let p = palette_for_dark(dark);
         let mut s = s.width_full();
@@ -416,7 +476,9 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
                 .height_full()
                 .min_height(0.0)
                 .flex_shrink(0.0)
-                .padding(12.0)
+                .flex_col()
+                .align_items(Some(AlignItems::Stretch))
+                .padding(0.0)
                 .border_right(1.0)
                 .border_color(p.border)
                 .background(p.sidebar),
@@ -439,8 +501,28 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
                 .background(p.panel),
             _ => s.padding_horiz(8.0).padding_vert(8.0).background(p.bg).min_height_full(),
         }
-    })
-    .into_any()
+    });
+    if let Some(key) = anchor_key {
+        register_scroll_anchor(key, c.id());
+    }
+    c.into_any()
+}
+
+fn theme_provider_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
+    let eff = theme_provider_resolved_value(props);
+    THEME_APPEARANCE_STACK.with(|st| st.borrow_mut().push(eff));
+    let body: AnyView = if children.len() == 1 {
+        value_into_any_view(children.into_iter().next().unwrap())
+    } else if children.is_empty() {
+        label(|| "").into_any()
+    } else {
+        v_stack_dyn_children(children).into_any()
+    };
+    THEME_APPEARANCE_STACK.with(|st| {
+        st.borrow_mut().pop();
+    });
+    // Match shell sizing: only `width_full` breaks `height: 100%` / flex fill on descendants (blank window).
+    container(body).style(|s| s.width_full().height_full().min_height(0.0)).into_any()
 }
 
 fn richtext_demo_view() -> AnyView {
@@ -483,7 +565,7 @@ fn richtext_demo_view() -> AnyView {
 fn texteditor_view(props: &ObjectMap) -> AnyView {
     let initial = props_string(props, &["value", "default", "defaultValue"])
         .unwrap_or_else(|| "// Tish + Floem\nfn hello() {\n    \"world\"\n}\n".to_string());
-    let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+    let appearance = resolve_appearance(props);
     let appearance_editor = appearance.clone();
     let appearance_style = appearance;
     text_editor(Rope::from(initial))
@@ -560,19 +642,18 @@ fn clip_view(children: Vec<Value>) -> AnyView {
 fn tabpanel_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let active = props_f64(props, &["active"], f64::NAN) as i32;
     let id = props_f64(props, &["id", "panel"], -999.0) as i32;
+    // Inactive panel: do not build children (editors, lists, etc. stay unallocated until this panel matches `active`).
+    if active != id {
+        return container(empty()).style(|s| s.hide()).into_any();
+    }
     let body: AnyView = if children.len() == 1 {
         value_into_any_view(children.into_iter().next().unwrap())
     } else {
         v_stack_dyn_children(children).into_any()
     };
-    container(body).style(move |s| {
-        if active == id {
-            s.width_full().padding(8.0)
-        } else {
-            s.hide()
-        }
-    })
-    .into_any()
+    container(body)
+        .style(|s| s.width_full().padding(8.0))
+        .into_any()
 }
 
 fn list_intrinsic_view(children: Vec<Value>) -> AnyView {
@@ -600,7 +681,7 @@ fn dropdown_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     };
     let initial = props_f64(props, &["value", "defaultValue"], items[0] as f64) as i32;
     let sel = create_rw_signal(initial);
-    let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+    let appearance = resolve_appearance(props);
     Dropdown::new_rw(sel, items.clone())
         .style(move |s| {
             let dark = effective_dark_from_appearance(appearance.as_str());
@@ -704,7 +785,8 @@ fn stack_style_h() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy
     |s| {
         s.width_full()
             .column_gap(12.0)
-            .items_center()
+            // Stretch so a sibling `<scroll style="flex: 1; min-height: 0">` gets a real viewport height.
+            .align_items(Some(AlignItems::Stretch))
             .justify_start()
     }
 }
@@ -745,50 +827,24 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
         Intrinsic::Button => {
             let cap = button_caption(&children, props);
             let handler = props_fn(props, &["onClick", "onclick", "onTap", "ontap"]);
-            let variant = props_string(props, &["variant", "tone"])
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            let active = props_bool(props, &["active", "selected"]);
-            let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
-            let appearance_lbl = appearance.clone();
-            let appearance_btn = appearance.clone();
-            let variant_lbl = variant.clone();
-            let variant_btn = variant.clone();
+            let label_style_props = props.clone();
             let button_style_props = props.clone();
+            // Vnode surface is HTML-like: `style` / `class` (when wired) drive visuals for any backend.
+            // Floem applies the same declarations a DOM host would map to CSS.
             let b = button(
                 label(move || cap.clone()).style(move |s| {
-                    let dark = effective_dark_from_appearance(appearance_lbl.as_str());
-                    let p = palette_for_dark(dark);
-                    s.font_size(14.0).font_bold().color(if active {
-                        Color::WHITE
-                    } else if variant_lbl == "ghost" {
-                        p.fg
-                    } else {
-                        Color::WHITE
-                    })
+                    html_css::merge_style_from_props(s.font_size(14.0).font_bold(), &label_style_props)
                 }),
             )
             .style(move |s| {
-                let dark = effective_dark_from_appearance(appearance_btn.as_str());
-                let p = palette_for_dark(dark);
-                let mut s = s
+                let s = s
                     .padding_horiz(14.0)
                     .padding_vert(8.0)
-                    .border_radius(8.0);
-                if active {
-                    s = s.background(p.accent).color(Color::WHITE).border(0.0);
-                } else if variant_btn == "ghost" {
-                    s = s
-                        .background(Color::TRANSPARENT)
-                        .color(p.fg)
-                        .border(0.0)
-                        .hover(|st| st.background(p.ghost_hover));
-                } else {
-                    s = s
-                        .background(Color::rgb8(59, 130, 246))
-                        .color(Color::WHITE)
-                        .border(0.0);
-                }
+                    .border_radius(8.0)
+                    .border(1.0)
+                    .border_color(Color::rgb8(200, 200, 210))
+                    .background(Color::rgb8(240, 240, 245))
+                    .color(Color::rgb8(34, 34, 40));
                 html_css::merge_style_from_props(s, &button_style_props)
             });
             match handler {
@@ -806,30 +862,47 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             } else {
                 v_stack_dyn_children(children).into_any()
             };
-            let min_h = props_f64(props, &["minHeight", "min_height"], 360.0);
-            let fill = props_string(props, &["variant", "layout"])
-                .map(|v| v.to_ascii_lowercase() == "fill")
-                .unwrap_or(false);
-            let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
-            let scroll_style_inner = props.clone();
+            let min_h = props_f64(props, &["minHeight", "min_height"], 120.0);
+            let fill = html_css::scroll_fill_from_style(props);
+            let scroll_root = props_bool(props, &["scrollRoot", "scroll-root"]);
+            let scroll_style_content = props.clone();
             let scroll_style_outer = props.clone();
-            scroll(
-                container(inner).style(move |s| {
-                    let dark = effective_dark_from_appearance(appearance.as_str());
-                    let p = palette_for_dark(dark);
-                    let mut s = s.padding(12.0).width_full().background(p.bg);
-                    if !fill {
-                        s = s.min_height(min_h);
-                    } else {
-                        s = s.min_height(0.0).height_full();
-                    }
-                    html_css::merge_style_from_props(s, &scroll_style_inner)
-                }),
-            )
-            .style(move |s| {
+            let wrapped = container(inner).style(move |s| {
+                let mut s = s.width_full();
+                if !fill {
+                    s = s.min_height(min_h);
+                } else {
+                    // Content must be unconstrained in height so it can overflow and be scrolled.
+                    // Only visual props (padding, background, …) go here — no height/flex sizing.
+                    s = s.min_height(0.0);
+                }
+                html_css::apply_scroll_content_style(s, &scroll_style_content)
+            });
+            let mut sc = scroll(wrapped);
+            if scroll_root {
+                if let Some(sig) = SCROLL_ROOT_PIXEL.with(|c| c.borrow().clone()) {
+                    sc = sc.scroll_to(move || sig.get());
+                }
+            }
+            // shrink_to_fit + flex_basis(0): without basis 0, flex_grow uses content height as the
+            // scroll viewport and nothing scrolls (sidebar nav is a common case).
+            sc = sc.scroll_style(move |s| {
+                let mut st = s;
+                if fill {
+                    st = st.shrink_to_fit().propagate_pointer_wheel(false);
+                }
+                st
+            });
+            sc.style(move |s| {
                 let mut s = s.width_full().border_radius(8.0);
                 if fill {
-                    s = s.flex_grow(1.0).min_height(0.0).border(0.0);
+                    s = s
+                        .height_full()
+                        .flex_grow(1.0)
+                        .flex_basis(0.0)
+                        .min_height(0.0)
+                        .min_width(0.0)
+                        .border(0.0);
                 } else {
                     s = s
                         .height(220.0)
@@ -849,7 +922,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             })
             .into_any(),
         Intrinsic::Divider => {
-            let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+            let appearance = resolve_appearance(props);
             let divider_style_props = props.clone();
             empty()
                 .style(move |s| {
@@ -865,7 +938,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 .into_any()
         }
         Intrinsic::Panel => {
-            let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+            let appearance = resolve_appearance(props);
             let body: floem::AnyView = if children.len() == 1 {
                 value_into_any_view(children.into_iter().next().unwrap())
             } else {
@@ -898,7 +971,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
         Intrinsic::TextInput => {
             let initial = props_string(props, &["value", "defaultValue", "default"]).unwrap_or_default();
             let placeholder = props_string(props, &["placeholder", "hint"]).unwrap_or_default();
-            let appearance = props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string());
+            let appearance = resolve_appearance(props);
             let buf = create_rw_signal(initial);
             let input_style_props = props.clone();
             let mut input = text_input(buf).style(move |s| {
@@ -972,6 +1045,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 .into_any()
         }
         Intrinsic::Themebox => themebox_view(props, children),
+        Intrinsic::ThemeProvider => theme_provider_view(props, children),
         Intrinsic::Dropdown => dropdown_view(props, children),
         Intrinsic::Texteditor => texteditor_view(props),
         Intrinsic::Tooltip => tooltip_view(props, children),
@@ -1007,14 +1081,15 @@ pub fn floem_run(update: Rc<dyn Fn(&[Value]) -> Value>) {
             *c.borrow_mut() = Some(os_dark);
         });
 
-        v_stack((scroll(
-            container(dyn_container(
-                move || root.get(),
-                move |v| value_into_any_view(v),
-            ))
-            .style(|s| s.width_full().min_height_full()),
-        )
-        .style(|s| s.flex_grow(1.0).min_height(0.0).width_full()),))
+        let root_pixel = create_rw_signal(None::<Point>);
+        SCROLL_ROOT_PIXEL.with(|c| *c.borrow_mut() = Some(root_pixel));
+
+        // No outer scroll: nested app scroll + flex sizing break with a shell scroll (wheel/clipping).
+        v_stack((container(dyn_container(
+            move || root.get(),
+            move |v| value_into_any_view(v),
+        ))
+        .style(|s| s.width_full().height_full().min_height(0.0)),))
         .style(|s| s.width_full().height_full().min_height(0.0))
         .keyboard_navigable()
         .on_event(EventListener::ThemeChanged, move |e| {
@@ -1039,14 +1114,156 @@ pub fn floem_run(update: Rc<dyn Fn(&[Value]) -> Value>) {
     });
 }
 
-/// `import { floem } from 'tish:floem'` → object with `run(callback)`.
-pub fn floem_object() -> Value {
-    tishlang_core::tish_module! {
-        "run" => |args: &[Value]| {
-            if let Some(Value::Function(f)) = args.first() {
-                floem_run(Rc::clone(f));
-            }
-            Value::Null
-        },
+fn value_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => Some(*n),
+        _ => None,
     }
 }
+
+fn set_root_scroll_viewport_pixel(origin: Point) {
+    SCROLL_ROOT_PIXEL.with(|c| {
+        if let Some(sig) = c.borrow().as_ref() {
+            sig.set(Some(origin));
+        }
+    });
+}
+
+/// [`Window.scrollTo`](https://drafts.csswg.org/cssom-view/#dom-window-scrollto): `(x, y)` or `({ top, left })`.
+fn window_scroll_to_impl(args: &[Value]) -> Value {
+    match args.len() {
+        2 => {
+            let x = value_as_f64(&args[0]).unwrap_or(0.0);
+            let y = value_as_f64(&args[1]).unwrap_or(0.0);
+            set_root_scroll_viewport_pixel(Point::new(x, y));
+        }
+        1 => match &args[0] {
+            Value::Object(o) => {
+                let m = o.borrow();
+                let left = m.get("left").and_then(value_as_f64).unwrap_or(0.0);
+                let top = m.get("top").and_then(value_as_f64).unwrap_or(0.0);
+                set_root_scroll_viewport_pixel(Point::new(left, top));
+            }
+            Value::Number(n) => set_root_scroll_viewport_pixel(Point::new(0.0, *n)),
+            _ => {}
+        },
+        _ => {}
+    }
+    Value::Null
+}
+
+fn element_scroll_into_view_by_id(element_id: &str) {
+    if let Some(vid) = SCROLL_ANCHOR_VIEWS.with(|m| m.borrow().get(element_id).copied()) {
+        vid.scroll_to(None);
+    }
+}
+
+/// [`Location.assign`](https://html.spec.whatwg.org/#dom-location-assign) with a URL containing `#fragment`
+/// scrolls the element with that id into view (same effect as changing `location.hash` in a browser).
+fn location_assign_impl(args: &[Value]) -> Value {
+    let Some(Value::String(s)) = args.first() else {
+        return Value::Null;
+    };
+    let url = s.as_ref();
+    if let Some((_, frag)) = url.split_once('#') {
+        if !frag.is_empty() {
+            element_scroll_into_view_by_id(frag.trim());
+        }
+    }
+    Value::Null
+}
+
+fn document_get_element_by_id_impl(args: &[Value]) -> Value {
+    let id = match args.first() {
+        Some(Value::String(s)) => s.as_ref().to_string(),
+        _ => return Value::Null,
+    };
+    let mut m = ObjectMap::default();
+    let id_for_fn = id;
+    m.insert(
+        Arc::from("scrollIntoView"),
+        Value::Function(Rc::new(move |_a: &[Value]| {
+            element_scroll_into_view_by_id(id_for_fn.as_str());
+            Value::Null
+        })),
+    );
+    Value::Object(Rc::new(RefCell::new(m)))
+}
+
+fn floem_location_object() -> Value {
+    tishlang_core::tish_module! {
+        "assign" => |args: &[Value]| location_assign_impl(args),
+    }
+}
+
+fn floem_window_object() -> Value {
+    tishlang_core::tish_module! {
+        "scrollTo" => |args: &[Value]| window_scroll_to_impl(args),
+        "location" => |_args: &[Value]| floem_location_object(),
+    }
+}
+
+fn floem_document_object() -> Value {
+    tishlang_core::tish_module! {
+        "getElementById" => |args: &[Value]| document_get_element_by_id_impl(args),
+    }
+}
+
+/// JSX `<ThemeProvider value="dark">` → vnode; `h(ThemeProvider, props, children)` uses this factory.
+fn theme_provider_component(args: &[Value]) -> Value {
+    let Some(Value::Object(rc)) = args.first() else {
+        return Value::Null;
+    };
+    let merged = rc.borrow().clone();
+    let children = merged
+        .get("children")
+        .and_then(|v| match v {
+            Value::Array(a) => Some(a.borrow().clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut props_only = merged;
+    props_only.remove(&Arc::from("children"));
+    let mut m = ObjectMap::default();
+    m.insert(Arc::from("tag"), Value::String("themeprovider".into()));
+    m.insert(
+        Arc::from("props"),
+        Value::Object(Rc::new(RefCell::new(props_only))),
+    );
+    m.insert(
+        Arc::from("children"),
+        Value::Array(Rc::new(RefCell::new(children))),
+    );
+    m.insert(Arc::from("_el"), Value::Null);
+    Value::Object(Rc::new(RefCell::new(m)))
+}
+
+/// The `floem` named export: `{ run }`.
+fn floem_api_object() -> Value {
+    let mut m = ObjectMap::default();
+    m.insert(Arc::from("run"), Value::Function(Rc::new(|args: &[Value]| {
+        if let Some(Value::Function(f)) = args.first() {
+            floem_run(Rc::clone(f));
+        }
+        Value::Null
+    })));
+    Value::Object(Rc::new(RefCell::new(m)))
+}
+
+/// Namespace returned by `import { … } from 'tish:floem'`.
+///
+/// Each named import is a direct key on this object so the generic codegen
+/// (`ns.get(export_name)`) works for every binding without special-casing:
+///
+/// ```tish
+/// import { floem, document, window, ThemeProvider } from "tish:floem"
+/// ```
+pub fn floem_object() -> Value {
+    let mut m = ObjectMap::default();
+    m.insert(Arc::from("floem"), floem_api_object());
+    m.insert(Arc::from("window"), floem_window_object());
+    m.insert(Arc::from("document"), floem_document_object());
+    m.insert(Arc::from("ThemeProvider"), Value::Function(Rc::new(theme_provider_component)));
+    Value::Object(Rc::new(RefCell::new(m)))
+}
+

@@ -2,7 +2,7 @@
   "name": "tish-floem",
   "version": "0.1.0",
   "description": "Floem UI host for Tish native JSX (standalone repo; not part of tish workspace)",
-  "license": "MIT",
+  "license": "PIF",
   "scripts": {
     "build:hello-floem": "cargo run --manifest-path ../tish/Cargo.toml -q -p tishlang -- compile --target native --native-backend rust examples/hello-floem/src/main.tish -o examples/hello-floem/dist/hello-floem",
     "build:kitchen-sink": "cargo run --manifest-path ../tish/Cargo.toml -q -p tishlang -- compile --target native --native-backend rust examples/kitchen-sink/src/main.tish -o examples/kitchen-sink/dist/kitchen-sink",

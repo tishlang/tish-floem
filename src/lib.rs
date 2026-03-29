@@ -12,25 +12,28 @@
 //! Baseline RAM is dominated by Floem, GPU, and fonts—not the Tish runtime.
 
 use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use floem::action;
-use floem::event::{Event, EventListener, EventPropagation};
-use floem::keyboard::Key;
+use floem::event::{listener, EventPropagation};
 use floem::peniko::Color;
+use floem::peniko::color::palette::css;
 use floem::peniko::kurbo::Point;
 use floem::prelude::*;
-use floem::text::{Attrs, AttrsList, TextLayout, Weight};
+use floem::style::CustomStylable;
+use floem::text::{Attrs, AttrsList, FontWeight};
 use floem::views::dropdown::Dropdown;
 use floem::views::editor::text::{default_dark_color, default_light_theme};
 use floem::views::slider::Slider;
 use floem::views::RadioButton;
 use floem::taffy::style::AlignItems;
+use floem::unit::PxPctAuto;
 use floem::ViewId;
 use floem::AnyView;
-use floem_winit::window::Theme;
+use winit::window::Theme;
 use lapce_xi_rope::Rope;
 use tishlang_core::{ObjectMap, Value};
 use tishlang_ui::{install_thread_local_host, Host, FRAGMENT_SENTINEL};
@@ -55,6 +58,11 @@ thread_local! {
     static THEME_APPEARANCE_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
+// Shared selection for `<input type="radio" name="…">` (cleared each commit).
+thread_local! {
+    static RADIO_GROUP_SEL: RefCell<HashMap<String, RwSignal<i32>>> = RefCell::new(HashMap::new());
+}
+
 pub(crate) fn register_scroll_anchor(key: String, id: ViewId) {
     SCROLL_ANCHOR_VIEWS.with(|m| {
         m.borrow_mut().insert(key, id);
@@ -67,6 +75,10 @@ fn clear_scroll_anchors() {
 
 fn clear_theme_appearance_stack() {
     THEME_APPEARANCE_STACK.with(|s| s.borrow_mut().clear());
+}
+
+fn clear_radio_groups() {
+    RADIO_GROUP_SEL.with(|c| c.borrow_mut().clear());
 }
 
 /// Holds the latest root vnode; [`FloemHost::commit_root`] updates it so the UI can react.
@@ -84,6 +96,7 @@ impl Host for FloemHost {
     fn commit_root(&mut self, vnode: &Value) {
         clear_scroll_anchors();
         clear_theme_appearance_stack();
+        clear_radio_groups();
         self.root.set(vnode.clone());
     }
 }
@@ -135,7 +148,7 @@ fn theme_provider_resolved_value(props: &ObjectMap) -> String {
         .unwrap_or_else(|| "system".to_string())
 }
 
-fn props_f64(props: &ObjectMap, keys: &[&str], default: f64) -> f64 {
+pub(crate) fn props_f64(props: &ObjectMap, keys: &[&str], default: f64) -> f64 {
     for k in keys {
         if let Some(Value::Number(n)) = props.get(*k) {
             return *n;
@@ -144,7 +157,7 @@ fn props_f64(props: &ObjectMap, keys: &[&str], default: f64) -> f64 {
     default
 }
 
-fn props_bool(props: &ObjectMap, keys: &[&str]) -> bool {
+pub(crate) fn props_bool(props: &ObjectMap, keys: &[&str]) -> bool {
     for k in keys {
         match props.get(*k) {
             Some(Value::Bool(b)) => return *b,
@@ -167,19 +180,19 @@ struct ThemePalette {
 fn palette_for_dark(dark: bool) -> ThemePalette {
     if dark {
         ThemePalette {
-            bg: Color::rgb8(0x1e, 0x22, 0x2a),
-            fg: Color::rgb8(0xe6, 0xe8, 0xef),
-            sidebar: Color::rgb8(0x17, 0x1a, 0x21),
-            border: Color::rgb8(0x3a, 0x40, 0x4d),
-            panel: Color::rgb8(0x25, 0x2a, 0x34),
+            bg: Color::from_rgb8(0x1e, 0x22, 0x2a),
+            fg: Color::from_rgb8(0xe6, 0xe8, 0xef),
+            sidebar: Color::from_rgb8(0x17, 0x1a, 0x21),
+            border: Color::from_rgb8(0x3a, 0x40, 0x4d),
+            panel: Color::from_rgb8(0x25, 0x2a, 0x34),
         }
     } else {
         ThemePalette {
-            bg: Color::rgb8(0xf6, 0xf7, 0xfb),
-            fg: Color::rgb8(0x22, 0x24, 0x2d),
-            sidebar: Color::rgb8(0xef, 0xf0, 0xf6),
-            border: Color::rgb8(0xd4, 0xd7, 0xe3),
-            panel: Color::WHITE,
+            bg: Color::from_rgb8(0xf6, 0xf7, 0xfb),
+            fg: Color::from_rgb8(0x22, 0x24, 0x2d),
+            sidebar: Color::from_rgb8(0xef, 0xf0, 0xf6),
+            border: Color::from_rgb8(0xd4, 0xd7, 0xe3),
+            panel: css::WHITE,
         }
     }
 }
@@ -198,27 +211,21 @@ enum Intrinsic {
     VStack,
     HStack,
     Button,
-    Scroll,
-    Spacer,
     Divider,
     Panel,
     Caption,
     TextInput,
     Checkbox,
-    Slider,
     Toggle,
-    Radiogroup,
     Container,
     Themebox,
     ThemeProvider,
-    Dropdown,
     Texteditor,
     Tooltip,
     Svgview,
     Imgdemo,
     Clip,
     Tabpanel,
-    List,
     Richtext,
 }
 
@@ -227,27 +234,21 @@ fn intrinsic_for_tag(tag: &str) -> Option<Intrinsic> {
         "vstack" | "v-stack" | "column" => Some(Intrinsic::VStack),
         "hstack" | "h-stack" | "row" => Some(Intrinsic::HStack),
         "button" => Some(Intrinsic::Button),
-        "scroll" => Some(Intrinsic::Scroll),
-        "spacer" => Some(Intrinsic::Spacer),
         "divider" | "separator" => Some(Intrinsic::Divider),
         "panel" | "card" | "section" => Some(Intrinsic::Panel),
         "caption" | "subtitle" => Some(Intrinsic::Caption),
-        "textinput" | "text-input" | "input" => Some(Intrinsic::TextInput),
+        "textinput" | "text-input" => Some(Intrinsic::TextInput),
         "checkbox" => Some(Intrinsic::Checkbox),
-        "slider" => Some(Intrinsic::Slider),
         "toggle" | "switch" => Some(Intrinsic::Toggle),
-        "radiogroup" | "radio-group" => Some(Intrinsic::Radiogroup),
         "container" | "box" => Some(Intrinsic::Container),
         "themebox" => Some(Intrinsic::Themebox),
         "themeprovider" => Some(Intrinsic::ThemeProvider),
-        "dropdown" => Some(Intrinsic::Dropdown),
         "texteditor" | "codeeditor" => Some(Intrinsic::Texteditor),
         "tooltip" => Some(Intrinsic::Tooltip),
         "svgview" | "svg" => Some(Intrinsic::Svgview),
         "imgdemo" => Some(Intrinsic::Imgdemo),
         "clip" => Some(Intrinsic::Clip),
         "tabpanel" => Some(Intrinsic::Tabpanel),
-        "list" => Some(Intrinsic::List),
         "richtext" => Some(Intrinsic::Richtext),
         _ => None,
     }
@@ -309,7 +310,7 @@ fn text_view(children: &[Value], props: &ObjectMap) -> floem::AnyView {
             let mut s = s;
             match variant.as_str() {
                 "caption" | "small" | "subtitle" => {
-                    s = s.font_size(12.0).color(Color::GRAY)
+                    s = s.font_size(12.0).color(css::GRAY)
                 }
                 _ => {
                     s = s.font_size(14.0).line_height(1.35);
@@ -318,53 +319,6 @@ fn text_view(children: &[Value], props: &ObjectMap) -> floem::AnyView {
             html_css::merge_style_from_props(s, &style_props)
         })
         .into_any()
-}
-
-fn radiogroup_view(children: Vec<Value>) -> floem::AnyView {
-    let mut items: Vec<(i32, String)> = Vec::new();
-    for c in children {
-        let Value::Object(o) = c else {
-            continue;
-        };
-        let m = o.borrow();
-        let tag = match m.get("tag") {
-            Some(Value::String(t)) => t.as_ref().to_string(),
-            _ => {
-                drop(m);
-                continue;
-            }
-        };
-        if tag != "radio" && tag != "option" {
-            drop(m);
-            continue;
-        }
-        let props = vnode_props(&m);
-        let ch = vnode_children(&m);
-        drop(m);
-        let v = props_string(&props, &["value"])
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| items.len() as i32);
-        let lbl = collect_visible_text(&ch);
-        items.push((
-            v,
-            if lbl.is_empty() {
-                format!("Option {}", v)
-            } else {
-                lbl
-            },
-        ));
-    }
-    if items.is_empty() {
-        return label(|| "(empty radiogroup)").into_any();
-    }
-    let initial = items[0].0;
-    let sel = create_rw_signal(initial);
-    v_stack_from_iter(items.into_iter().map(|(val, lbl)| {
-        let cap = lbl.clone();
-        RadioButton::new_labeled_rw(val, sel, move || cap.clone()).into_view()
-    }))
-    .style(stack_style_v())
-    .into_any()
 }
 
 fn heading_level_from_tag(tag: &str) -> Option<u8> {
@@ -417,8 +371,112 @@ fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floe
 fn caption_view(children: &[Value]) -> floem::AnyView {
     let text = collect_visible_text(children);
     label(move || text.clone())
-        .style(|s| s.font_size(12.0).color(Color::GRAY).margin_bottom(8.0))
+        .style(|s| s.font_size(12.0).color(css::GRAY).margin_bottom(8.0))
         .into_any()
+}
+
+fn input_type_normalized(props: &ObjectMap) -> String {
+    props_string(props, &["type"])
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn html_input_text_view(props: &ObjectMap) -> AnyView {
+    let initial = props_string(props, &["value", "defaultValue", "default"]).unwrap_or_default();
+    let placeholder = props_string(props, &["placeholder", "hint"]).unwrap_or_default();
+    let appearance = resolve_appearance(props);
+    let buf = create_rw_signal(initial);
+    let input_style_props = props.clone();
+    let mut input = text_input(buf).style(move |s| {
+        let dark = effective_dark_from_appearance(appearance.as_str());
+        let p = palette_for_dark(dark);
+        let s = s
+            .width_full()
+            .max_width(400.0)
+            .padding_horiz(12.0)
+            .padding_vert(8.0)
+            .border(1.0)
+            .border_color(p.border)
+            .border_radius(6.0)
+            .background(p.bg)
+            .color(p.fg);
+        html_css::merge_style_from_props(s, &input_style_props)
+    });
+    if !placeholder.is_empty() {
+        input = input.placeholder(placeholder);
+    }
+    input.into_any()
+}
+
+fn html_input_checkbox_view(props: &ObjectMap) -> AnyView {
+    let start = props_bool(props, &["checked", "defaultChecked"]);
+    let on = create_rw_signal(start);
+    Checkbox::labeled_rw(on, move || String::new()).into_any()
+}
+
+fn html_input_range_view(props: &ObjectMap) -> AnyView {
+    let min = props_f64(props, &["min"], 0.0);
+    let max = props_f64(props, &["max"], 100.0);
+    let val = props_f64(props, &["value", "defaultValue"], min);
+    let pct_f = if (max - min).abs() > f64::EPSILON {
+        ((val - min) / (max - min) * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let pct = create_rw_signal(pct_f.pct());
+    Slider::new_rw(pct)
+        .slider_style(|s| {
+            s.bar_color(Color::from_rgb8(220, 225, 235))
+                .accent_bar_color(Color::from_rgb8(59, 130, 246))
+                .bar_radius(4.pct())
+                .accent_bar_radius(4.pct())
+        })
+        .style(|s| {
+            s.flex_grow(1.0)
+                .flex_basis(0.0)
+                .min_width(120.0)
+                .max_width(420.0)
+                .margin_vert(6.0)
+        })
+        .into_any()
+}
+
+fn html_input_radio_view(props: &ObjectMap) -> AnyView {
+    let name = props_string(props, &["name"]).unwrap_or_default();
+    let value = props_string(props, &["value"])
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
+    let checked = props_bool(props, &["checked", "defaultChecked"]);
+
+    let sel = if name.is_empty() {
+        create_rw_signal(value)
+    } else {
+        RADIO_GROUP_SEL.with(|cell| {
+            let mut m = cell.borrow_mut();
+            match m.entry(name) {
+                Entry::Occupied(e) => {
+                    let s = *e.get();
+                    if checked {
+                        s.set(value);
+                    }
+                    s
+                }
+                Entry::Vacant(v) => *v.insert(create_rw_signal(value)),
+            }
+        })
+    };
+
+    RadioButton::new_labeled_rw(value, sel, move || String::new()).into_any()
+}
+
+fn html_input_view(props: &ObjectMap, _children: Vec<Value>) -> AnyView {
+    match input_type_normalized(props).as_str() {
+        "radio" => html_input_radio_view(props),
+        "range" => html_input_range_view(props),
+        "checkbox" => html_input_checkbox_view(props),
+        _ => html_input_text_view(props),
+    }
 }
 
 fn dropdown_options(children: &[Value]) -> Vec<i32> {
@@ -477,7 +535,7 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
                 .min_height(0.0)
                 .flex_shrink(0.0)
                 .flex_col()
-                .align_items(Some(AlignItems::Stretch))
+                .align_items(AlignItems::Stretch)
                 .padding(0.0)
                 .border_right(1.0)
                 .border_color(p.border)
@@ -488,9 +546,9 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
                 .border_bottom(1.0)
                 .border_color(p.border)
                 .background(if dark {
-                    Color::rgb8(0x14, 0x16, 0x1c)
+                    Color::from_rgb8(0x14, 0x16, 0x1c)
                 } else {
-                    Color::rgb8(0xf0, 0xf1, 0xf6)
+                    Color::from_rgb8(0xf0, 0xf1, 0xf6)
                 }),
             "card" | "panel" => s
                 .padding(16.0)
@@ -511,22 +569,35 @@ fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
 fn theme_provider_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let eff = theme_provider_resolved_value(props);
     THEME_APPEARANCE_STACK.with(|st| st.borrow_mut().push(eff));
-    let body: AnyView = if children.len() == 1 {
-        value_into_any_view(children.into_iter().next().unwrap())
-    } else if children.is_empty() {
-        label(|| "").into_any()
-    } else {
-        v_stack_dyn_children(children).into_any()
+
+    let inner: AnyView = match children.len() {
+        0 => empty().into_any(),
+        1 => value_into_any_view(children.into_iter().next().unwrap()),
+        _ => v_stack_from_iter(children.into_iter().map(|c| value_into_any_view(c).into_view()))
+            .style(|s| s.size_full())
+            .into_any(),
     };
+
     THEME_APPEARANCE_STACK.with(|st| {
         st.borrow_mut().pop();
     });
-    // Match shell sizing: only `width_full` breaks `height: 100%` / flex fill on descendants (blank window).
-    container(body).style(|s| s.width_full().height_full().min_height(0.0)).into_any()
+
+    // Layout-transparent wrapper: fills the parent and establishes a flex-column context so
+    // children can use either `flex: 1` (to grow along the column axis) or `width/height: 100%`
+    // (which resolves against this container's definite size).
+    container(inner)
+        .style(|s| s.size_full().flex_col())
+        .into_any()
 }
 
 fn richtext_demo_view() -> AnyView {
-    let rich = rich_text(move || {
+    let text0 = "Rich text with a highlighted span.".to_string();
+    let initial = AttrsList::new(
+        Attrs::new()
+            .color(Color::from_rgb8(0x33, 0x36, 0x3f))
+            .font_size(15.0),
+    );
+    let rich = rich_text(text0.clone(), initial, move || {
         let dark = OS_THEME_IS_DARK.with(|c| {
             c.borrow()
                 .as_ref()
@@ -534,14 +605,14 @@ fn richtext_demo_view() -> AnyView {
                 .unwrap_or(false)
         });
         let base = if dark {
-            Color::rgb8(0xc0, 0xc6, 0xd4)
+            Color::from_rgb8(0xc0, 0xc6, 0xd4)
         } else {
-            Color::rgb8(0x33, 0x36, 0x3f)
+            Color::from_rgb8(0x33, 0x36, 0x3f)
         };
         let hi = if dark {
-            Color::rgb8(0x7d, 0xae, 0xff)
+            Color::from_rgb8(0x7d, 0xae, 0xff)
         } else {
-            Color::rgb8(0x1d, 0x4e, 0xd8)
+            Color::from_rgb8(0x1d, 0x4e, 0xd8)
         };
         let text = "Rich text with a highlighted span.";
         let mut attrs = AttrsList::new(Attrs::new().color(base).font_size(15.0));
@@ -551,13 +622,11 @@ fn richtext_demo_view() -> AnyView {
                 start..end,
                 Attrs::new()
                     .color(hi)
-                    .weight(Weight::BOLD)
+                    .weight(FontWeight::BOLD)
                     .font_size(15.0),
             );
         }
-        let mut tl = TextLayout::new();
-        tl.set_text(text, attrs);
-        tl
+        (text.to_string(), attrs)
     });
     rich.style(|s| s.margin_top(6.0)).into_any()
 }
@@ -624,7 +693,7 @@ fn tiny_png_bytes() -> Vec<u8> {
 
 fn imgdemo_view() -> AnyView {
     img(|| tiny_png_bytes())
-        .style(|s| s.width(32.px()).height(32.px()))
+        .style(|s| s.width(32.pt()).height(32.pt()))
         .into_any()
 }
 
@@ -656,23 +725,8 @@ fn tabpanel_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
         .into_any()
 }
 
-fn list_intrinsic_view(children: Vec<Value>) -> AnyView {
-    let rows: Vec<_> = children
-        .into_iter()
-        .map(|c| value_into_any_view(c).into_view())
-        .collect();
-    list(rows)
-        .style(|s| {
-            s.width_full()
-                .max_width(420.0)
-                .border(1.0)
-                .border_color(Color::rgb8(200, 200, 210))
-                .border_radius(6.0)
-        })
-        .into_any()
-}
-
-fn dropdown_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
+/// `<select>` + `<option value="…">` → Floem dropdown (HTML pattern).
+fn select_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let opts = dropdown_options(&children);
     let items: Vec<i32> = if opts.is_empty() {
         vec![1, 2, 3]
@@ -747,8 +801,17 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
                 Some(Value::String(t)) if t.as_ref() == "text" => text_view(&children, &props),
                 Some(Value::String(t)) => {
                     let name_ref = t.as_ref();
-                    if matches!(name_ref, "div" | "span" | "p") {
+                    if matches!(
+                        name_ref,
+                        "div" | "span" | "p" | "ul" | "ol" | "li" | "label" | "fieldset"
+                    ) {
                         return html_css::html_element_view(name_ref, &props, children);
+                    }
+                    if name_ref == "select" {
+                        return select_view(&props, children);
+                    }
+                    if name_ref == "input" {
+                        return html_input_view(&props, children);
                     }
                     if let Some(lvl) = heading_level_from_tag(name_ref) {
                         return html_heading_view(lvl, &props, children);
@@ -759,7 +822,7 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
                     }
                     v_stack((
                         label(move || format!("{}", name))
-                            .style(|s| s.font_size(11.0).color(Color::GRAY)),
+                            .style(|s| s.font_size(11.0).color(css::GRAY)),
                         v_stack_dyn_children(children),
                     ))
                     .into_any()
@@ -770,6 +833,83 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
         Value::Null => label(|| "").into_any(),
         _ => label(|| "").into_any(),
     }
+}
+
+const SCROLL_ROOT_PROP_KEYS: &[&str] = &[
+    "data-scroll-root",
+    "dataScrollRoot",
+    "scrollRoot",
+    "scroll-root",
+];
+
+fn scroll_root_from_props(props: &ObjectMap) -> bool {
+    if props_bool(props, SCROLL_ROOT_PROP_KEYS) {
+        return true;
+    }
+    for k in SCROLL_ROOT_PROP_KEYS {
+        if let Some(Value::String(s)) = props.get(*k) {
+            if s.trim().eq_ignore_ascii_case("true") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Floem scroll viewport (wheel, flex fill, `window.scrollTo` target). Inner node is already wrapped like CSS `overflow` content.
+pub(crate) fn scroll_host_viewport(props: &ObjectMap, wrapped_inner: AnyView) -> AnyView {
+    let fill = html_css::scroll_fill_from_style(props);
+    let scroll_root = scroll_root_from_props(props);
+    let scroll_style_outer = props.clone();
+    let mut sc = Scroll::new(wrapped_inner);
+    if scroll_root {
+        if let Some(sig) = SCROLL_ROOT_PIXEL.with(|c| c.borrow().clone()) {
+            sc = sc.scroll_to(move || sig.get());
+        }
+    }
+    // Floem layout examples (e.g. `examples/layout/left_sidebar`) use `flex_col` + `flex_grow` on
+    // `Scroll` only — not `ScrollCustomStyle::shrink_to_fit`. Combining `shrink_to_fit` with
+    // `align_items: stretch` was collapsing the scroll content to zero visible height on main.
+    sc = sc.custom_style(move |s| {
+        let mut st = s;
+        if fill {
+            st = st.propagate_pointer_wheel(false);
+        }
+        st
+    });
+    sc.style(move |s| {
+        // Column flex: cross axis is horizontal. `items_start` keeps children at content width;
+        // `Stretch` makes the scroll subtree use the full viewport width (fill mode only — see
+        // custom_style note above re shrink_to_fit + stretch height).
+        let mut s = s.width_full().flex_col();
+        s = if fill {
+            s.align_items(AlignItems::Stretch)
+        } else {
+            s.items_start()
+        };
+        if fill {
+            s = s
+                .flex_basis(0.0)
+                .min_width(0.0)
+                .min_height(0.0)
+                .flex_grow(1.0)
+                .flex_shrink(1.0)
+                .border(0.0);
+            s = html_css::merge_scroll_host_style_from_props(s, &scroll_style_outer);
+            // Authored `height: 100%` is applied above as a real percent, but in this flex chain
+            // the percentage base is often indefinite, so Taffy can resolve it to 0 and collapse
+            // the scroll viewport (blank main column). Vertical fill is already expressed by
+            // `flex: 1` + `flex-basis: 0` + `min-height: 0` on the host.
+            s.height(PxPctAuto::Auto)
+        } else {
+            s = s
+                .height(220.0)
+                .border(1.0)
+                .border_color(Color::from_rgb8(210, 210, 220));
+            html_css::merge_style_from_props(s, &scroll_style_outer)
+        }
+    })
+    .into_any()
 }
 
 fn stack_style_v() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy {
@@ -784,9 +924,9 @@ fn stack_style_v() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy
 fn stack_style_h() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy {
     |s| {
         s.width_full()
-            .column_gap(12.0)
-            // Stretch so a sibling `<scroll style="flex: 1; min-height: 0">` gets a real viewport height.
-            .align_items(Some(AlignItems::Stretch))
+            .col_gap(12.0)
+            // Stretch so a flex sibling with `flex: 1; min-height: 0` gets a real viewport height.
+            .align_items(AlignItems::Stretch)
             .justify_start()
     }
 }
@@ -842,9 +982,9 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                     .padding_vert(8.0)
                     .border_radius(8.0)
                     .border(1.0)
-                    .border_color(Color::rgb8(200, 200, 210))
-                    .background(Color::rgb8(240, 240, 245))
-                    .color(Color::rgb8(34, 34, 40));
+                    .border_color(Color::from_rgb8(200, 200, 210))
+                    .background(Color::from_rgb8(240, 240, 245))
+                    .color(Color::from_rgb8(34, 34, 40));
                 html_css::merge_style_from_props(s, &button_style_props)
             });
             match handler {
@@ -856,77 +996,6 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 None => b.into_any(),
             }
         }
-        Intrinsic::Scroll => {
-            let inner: floem::AnyView = if children.len() == 1 {
-                value_into_any_view(children.into_iter().next().unwrap())
-            } else {
-                v_stack_dyn_children(children).into_any()
-            };
-            let min_h = props_f64(props, &["minHeight", "min_height"], 120.0);
-            let fill = html_css::scroll_fill_from_style(props);
-            let scroll_root = props_bool(props, &["scrollRoot", "scroll-root"]);
-            let scroll_style_content = props.clone();
-            let scroll_style_outer = props.clone();
-            let wrapped = container(inner).style(move |s| {
-                let mut s = s.width_full();
-                if !fill {
-                    s = s.min_height(min_h);
-                } else {
-                    // Content must be unconstrained in height so it can overflow and be scrolled.
-                    // Only visual props (padding, background, …) go here — no height/flex sizing.
-                    s = s.min_height(0.0);
-                }
-                html_css::apply_scroll_content_style(s, &scroll_style_content)
-            });
-            let mut sc = scroll(wrapped);
-            if scroll_root {
-                if let Some(sig) = SCROLL_ROOT_PIXEL.with(|c| c.borrow().clone()) {
-                    sc = sc.scroll_to(move || sig.get());
-                }
-            }
-            // shrink_to_fit + flex_basis(0): without basis 0, flex_grow uses content height as the
-            // scroll viewport and nothing scrolls (sidebar nav is a common case).
-            sc = sc.scroll_style(move |s| {
-                let mut st = s;
-                if fill {
-                    st = st.shrink_to_fit().propagate_pointer_wheel(false);
-                }
-                st
-            });
-            sc.style(move |s| {
-                let mut s = s.width_full();
-                if fill {
-                    // Viewport size comes entirely from flex layout: don't let user's `width: 100%`
-                    // or `height: 100%` override flex-grow sizing (causes layout breakage on resize).
-                    s = s
-                        .height_full()
-                        .flex_grow(1.0)
-                        .flex_shrink(1.0)
-                        .flex_basis(0.0)
-                        .min_height(0.0)
-                        .min_width(0.0)
-                        .border(0.0);
-                    // Only visual frame properties (background, border-radius, …) from user style.
-                    html_css::apply_scroll_viewport_style(s, &scroll_style_outer)
-                } else {
-                    s = s
-                        .height(220.0)
-                        .border(1.0)
-                        .border_color(Color::rgb8(210, 210, 220));
-                    // Non-fill: allow full explicit sizing from user style.
-                    html_css::merge_style_from_props(s, &scroll_style_outer)
-                }
-            })
-            .into_any()
-        }
-        Intrinsic::Spacer => empty()
-            .style(|s| {
-                s.flex_grow(1.0)
-                    .flex_basis(0.0)
-                    .min_width(0.0)
-                    .min_height(0.0)
-            })
-            .into_any(),
         Intrinsic::Divider => {
             let appearance = resolve_appearance(props);
             let divider_style_props = props.clone();
@@ -934,9 +1003,9 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 .style(move |s| {
                     let dark = effective_dark_from_appearance(appearance.as_str());
                     let c = if dark {
-                        Color::rgb8(0x45, 0x4d, 0x5c)
+                        Color::from_rgb8(0x45, 0x4d, 0x5c)
                     } else {
-                        Color::rgb8(200, 200, 210)
+                        Color::from_rgb8(200, 200, 210)
                     };
                     let s = s.height(1.0).width_full().background(c).margin_vert(12.0);
                     html_css::merge_style_from_props(s, &divider_style_props)
@@ -1010,33 +1079,13 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             };
             Checkbox::labeled_rw(checked, move || lbl.clone()).into_any()
         }
-        Intrinsic::Slider => {
-            let start = props_f64(props, &["value", "defaultValue"], 40.0).clamp(0.0, 100.0);
-            let pct = create_rw_signal(start.pct());
-            Slider::new_rw(pct)
-                .slider_style(|s| {
-                    s.bar_color(Color::rgb8(220, 225, 235))
-                        .accent_bar_color(Color::rgb8(59, 130, 246))
-                        .bar_radius(4.pct())
-                        .accent_bar_radius(4.pct())
-                })
-                .style(|s| {
-                    s.flex_grow(1.0)
-                        .flex_basis(0.0)
-                        .min_width(120.0)
-                        .max_width(420.0)
-                        .margin_vert(6.0)
-                })
-                .into_any()
-        }
         Intrinsic::Toggle => {
             let on = create_rw_signal(false);
             toggle_button(move || on.get())
-                .on_toggle(move |v| on.set(v))
+                .on_event_stop(ToggleChanged::listener(), move |_cx, v| on.set(*v))
                 .style(|s| s.margin_vert(8.0))
                 .into_any()
         }
-        Intrinsic::Radiogroup => radiogroup_view(children),
         Intrinsic::Container => {
             let body: floem::AnyView = if children.len() == 1 {
                 value_into_any_view(children.into_iter().next().unwrap())
@@ -1052,14 +1101,12 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
         }
         Intrinsic::Themebox => themebox_view(props, children),
         Intrinsic::ThemeProvider => theme_provider_view(props, children),
-        Intrinsic::Dropdown => dropdown_view(props, children),
         Intrinsic::Texteditor => texteditor_view(props),
         Intrinsic::Tooltip => tooltip_view(props, children),
         Intrinsic::Svgview => svg_view(props),
         Intrinsic::Imgdemo => imgdemo_view(),
         Intrinsic::Clip => clip_view(children),
         Intrinsic::Tabpanel => tabpanel_view(props, children),
-        Intrinsic::List => list_intrinsic_view(children),
         Intrinsic::Richtext => richtext_demo_view(),
     }
 }
@@ -1090,30 +1137,23 @@ pub fn floem_run(update: Rc<dyn Fn(&[Value]) -> Value>) {
         let root_pixel = create_rw_signal(None::<Point>);
         SCROLL_ROOT_PIXEL.with(|c| *c.borrow_mut() = Some(root_pixel));
 
-        // No outer scroll: nested app scroll + flex sizing break with a shell scroll (wheel/clipping).
-        v_stack((container(dyn_container(
+        dyn_container(
             move || root.get(),
             move |v| value_into_any_view(v),
-        ))
-        .style(|s| s.width_full().height_full().min_height(0.0)),))
-        .style(|s| s.width_full().height_full().min_height(0.0))
-        .keyboard_navigable()
-        .on_event(EventListener::ThemeChanged, move |e| {
-            if let Event::ThemeChanged(t) = e {
-                os_dark.set(Some(*t == Theme::Dark));
-            }
+        )
+        .style(|s| s.size_full().keyboard_navigable())
+        .on_event(listener::ThemeChanged, move |_cx, t| {
+            os_dark.set(Some(*t == Theme::Dark));
             EventPropagation::Continue
         })
-        .on_event(EventListener::KeyUp, |e| {
-            if let Event::KeyUp(ev) = e {
-                let is_tilde = match &ev.key.logical_key {
-                    Key::Character(s) => s.as_str() == "~",
-                    _ => false,
-                };
-                if is_tilde {
-                    action::inspect();
-                    return EventPropagation::Stop;
-                }
+        .on_event(listener::KeyUp, |_cx, ev| {
+            let is_tilde = match &ev.key {
+                Key::Character(s) => s == "~",
+                _ => false,
+            };
+            if is_tilde {
+                action::inspect();
+                return EventPropagation::Stop;
             }
             EventPropagation::Continue
         })
@@ -1244,6 +1284,37 @@ fn theme_provider_component(args: &[Value]) -> Value {
     Value::Object(Rc::new(RefCell::new(m)))
 }
 
+/// JSX component → vnode with the given intrinsic `tag` (lowercase, matches [`intrinsic_for_tag`]).
+fn make_vnode_factory(tag: &'static str) -> Value {
+    Value::Function(Rc::new(move |args: &[Value]| {
+        let Some(Value::Object(rc)) = args.first() else {
+            return Value::Null;
+        };
+        let merged = rc.borrow().clone();
+        let children = merged
+            .get("children")
+            .and_then(|v| match v {
+                Value::Array(a) => Some(a.borrow().clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mut props_only = merged;
+        props_only.remove(&Arc::from("children"));
+        let mut m = ObjectMap::default();
+        m.insert(Arc::from("tag"), Value::String(tag.into()));
+        m.insert(
+            Arc::from("props"),
+            Value::Object(Rc::new(RefCell::new(props_only))),
+        );
+        m.insert(
+            Arc::from("children"),
+            Value::Array(Rc::new(RefCell::new(children))),
+        );
+        m.insert(Arc::from("_el"), Value::Null);
+        Value::Object(Rc::new(RefCell::new(m)))
+    }))
+}
+
 /// The `floem` named export: `{ run }`.
 fn floem_api_object() -> Value {
     let mut m = ObjectMap::default();
@@ -1262,7 +1333,7 @@ fn floem_api_object() -> Value {
 /// (`ns.get(export_name)`) works for every binding without special-casing:
 ///
 /// ```tish
-/// import { floem, document, window, ThemeProvider } from "tish:floem"
+/// import { floem, document, window, ThemeProvider, Panel } from "tish:floem"
 /// ```
 pub fn floem_object() -> Value {
     let mut m = ObjectMap::default();
@@ -1270,6 +1341,19 @@ pub fn floem_object() -> Value {
     m.insert(Arc::from("window"), floem_window_object());
     m.insert(Arc::from("document"), floem_document_object());
     m.insert(Arc::from("ThemeProvider"), Value::Function(Rc::new(theme_provider_component)));
+    // Platform UI primitives (`tish:floem`); HTML-like controls use native tags (`select`, `input`, `div` overflow).
+    m.insert(Arc::from("Panel"), make_vnode_factory("panel"));
+    m.insert(Arc::from("Caption"), make_vnode_factory("caption"));
+    m.insert(Arc::from("RichText"), make_vnode_factory("richtext"));
+    m.insert(Arc::from("Toggle"), make_vnode_factory("toggle"));
+    m.insert(Arc::from("TextInput"), make_vnode_factory("textinput"));
+    m.insert(Arc::from("TextEditor"), make_vnode_factory("texteditor"));
+    m.insert(Arc::from("Checkbox"), make_vnode_factory("checkbox"));
+    m.insert(Arc::from("TabPanel"), make_vnode_factory("tabpanel"));
+    m.insert(Arc::from("Clip"), make_vnode_factory("clip"));
+    m.insert(Arc::from("Tooltip"), make_vnode_factory("tooltip"));
+    m.insert(Arc::from("SvgView"), make_vnode_factory("svgview"));
+    m.insert(Arc::from("ImgDemo"), make_vnode_factory("imgdemo"));
     Value::Object(Rc::new(RefCell::new(m)))
 }
 

@@ -1,20 +1,34 @@
-// Kitchen sink: UI is entirely Tish/JSX; the Floem host maps tags to views (`floem.run` like hello-floem).
-// Layout: `<div style="...">` flex. Scroll regions that should fill use `style` with `flex: 1; min-height: 0`
-// (same rule a DOM backend would use). Anchor navigation uses DOM/CSSOM-style APIs: `document.getElementById(id).scrollIntoView()`
-// or `window.location.assign("#id")` — not Floem-specific helpers.
-// Appearance defaults to `system` (follow OS); wrap with `<ThemeProvider value="dark">` (or `appearance="light"`) to override.
+// Kitchen sink: UI in Tish/JSX. Use HTML-like tags (`div` + `overflow`, `select`, `input`, `ul`/`li`).
+// Platform-only pieces import from `tish:floem`. Anchor nav: `document.getElementById(id).scrollIntoView()`.
+// Main scroll viewport: `div` with `overflow: auto` and `scrollRoot={true}` when using flex fill.
 //
 // Run: npm run dev:kitchen-sink from repo root.
 
-import { floem, document, ThemeProvider } from "tish:floem"
+import {
+  floem,
+  document,
+  ThemeProvider,
+  Panel,
+  Caption,
+  RichText,
+  Toggle,
+  TextEditor,
+  Checkbox,
+  TabPanel,
+  Clip,
+  Tooltip,
+  SvgView,
+  ImgDemo,
+} from "tish:floem"
+import { Spacer } from "./Spacer.tish"
 
 fn App() {
   return (
+
     <ThemeProvider>
-    <div style="display: flex; flex-direction: row; flex: 1; min-height: 0; width: 100%; height: 100%; align-items: stretch">
-      <div style="display: flex; flex-direction: column; width: 200px; min-width: 0; flex-shrink: 0; min-height: 0; height: 100%; background: #171a21; border-color: #3a404d; border-right: 1px">
-        <scroll style="flex: 1; min-height: 0; min-width: 0; width: 100%; height: 100%; padding: 12px; background: #171a21">
-          <div style="display: flex; flex-direction: column; gap: 8px; align-items: stretch; width: 100%">
+      <div style="display: flex; flex-direction: row; flex: 1; backgroundColor: blue">
+        <div style="width: 200px; background: green">
+          <div style="flex: 1; width: 200px; overflow: auto; backgroundColor: red">
             <h1>Kitchen sink</h1>
             <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("top").scrollIntoView()}>
               TOC (static)
@@ -41,7 +55,7 @@ fn App() {
               Lists & tabs
             </button>
             <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("dropdown").scrollIntoView()}>
-              Dropdown
+              Select & layout
             </button>
             <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("scroll").scrollIntoView()}>
               Scroll sample
@@ -50,137 +64,140 @@ fn App() {
               Media
             </button>
           </div>
-        </scroll>
-      </div>
-      <scroll style="flex: 1; min-height: 0; min-width: 0; width: 100%; height: 100%" scrollRoot={true}>
-        <div style="display: flex; flex-direction: column; gap: 12px; width: 100%; min-height: 0">
-          <div id="top" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #3a404d; background: #14161c; width: 100%">
-            <h1>Tish + Floem</h1>
-            <p style="color: #a8b0bd; margin: 0">
-              Theme: defaults to system (OS); use ThemeProvider to set light/dark. Omit redundant appearance props.
-            </p>
-          </div>
-
-          <h2 id="overview">Overview</h2>
-          <panel>
-            <p>JSX is authored here; tishlang_floem maps intrinsics to Floem. Upstream examples: https://github.com/lapce/floem/tree/main/examples</p>
-          </panel>
-
-          <h2 id="typography">Typography</h2>
-          <panel>
-            <p>Body</p>
-            <p style="color: #6b7280">Muted</p>
-            <richtext />
-          </panel>
-
-          <h2 id="buttons">Buttons</h2>
-          <panel>
-            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap">
-              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: #3b82f6; color: #fff" onClick={() => console.log("clicked")}>
-                Primary
-              </button>
-              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
-                Ghost
-              </button>
-            </div>
-            <toggle />
-          </panel>
-
-          <h2 id="inputs">Text input</h2>
-          <panel>
-            <textinput placeholder="Type…" value="" />
-          </panel>
-
-          <h2 id="editor">Editor</h2>
-          <panel>
-            <texteditor />
-          </panel>
-
-          <h2 id="controls">Controls</h2>
-          <panel>
-            <checkbox>
-              Subscribe
-            </checkbox>
-            <radiogroup>
-              <radio value="1">
-                A
-              </radio>
-              <radio value="2">
-                B
-              </radio>
-            </radiogroup>
-            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
-              Volume
-              <slider value={40} />
-            </div>
-            <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
-              Notify
-              <toggle />
-            </div>
-          </panel>
-
-          <h2 id="lists">Lists & tabs</h2>
-          <panel>
-            <list>
-              <p>Row A</p>
-              <p>Row B</p>
-            </list>
-            <caption>Tab panels use tabpanel + matching active/id props.</caption>
-            <tabpanel active={0} id={0}>
-              <p>Tab 1 content</p>
-            </tabpanel>
-            <tabpanel active={0} id={1}>
-              <p>Tab 2 (hidden while active=0)</p>
-            </tabpanel>
-          </panel>
-
-          <h2 id="dropdown">Dropdown & layout</h2>
-          <panel>
-            <dropdown value={20}>
-              <option value="10">
-                Ten
-              </option>
-              <option value="20">
-                Twenty
-              </option>
-              <option value="30">
-                Thirty
-              </option>
-            </dropdown>
-            <tooltip tip="Tooltip">
-              <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
-                Hover
-              </button>
-            </tooltip>
-            <clip>
-              Clipped
-            </clip>
-            <div style="display: flex; flex-direction: row; width: 100%; align-items: center">
-              Left
-              <spacer />
-              Right
-            </div>
-          </panel>
-
-          <h2 id="scroll">Scroll sample</h2>
-          <scroll style="min-height: 120px; width: 100%; border: 1px solid #d4d7e3; border-radius: 8px">
-            <div style="display: flex; flex-direction: column; gap: 8px; padding: 8px">
-              <p>Line 1</p>
-              <p>Line 2</p>
-              <p>Line 3</p>
-              <p>Line 4</p>
-              <p>Line 5</p>
-            </div>
-          </scroll>
-
-          <h2 id="media">Media</h2>
-          <panel>
-            <svgview />
-            <imgdemo />
-          </panel>
         </div>
-      </scroll>
-    </div>
+        <div style="background: #e6e6e6" scrollRoot={true}>
+          <div style="flex: 1; overflow: auto; backgroundColor: red">
+            <div id="top" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #3a404d; background: #14161c; width: 100%">
+              <h1>Tish + Floem</h1>
+              <p style="color: #a8b0bd; margin: 0">
+                Theme: defaults to system (OS); use ThemeProvider to set light/dark. Omit redundant appearance props.
+              </p>
+            </div>
+
+            <h2 id="overview">Overview</h2>
+            <Panel>
+              <p>JSX is authored here; tishlang_floem maps HTML-like tags and a few platform widgets to Floem. Upstream examples: https://github.com/lapce/floem/tree/main/examples</p>
+            </Panel>
+
+            <h2 id="typography">Typography</h2>
+            <Panel>
+              <p>Body</p>
+              <p style="color: #6b7280">Muted</p>
+              <RichText />
+            </Panel>
+
+            <h2 id="buttons">Buttons</h2>
+            <Panel>
+              <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap">
+                <button style="padding: 8px 14px; border-radius: 8px; border: none; background: #3b82f6; color: #fff" onClick={() => console.log("clicked")}>
+                  Primary
+                </button>
+                <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
+                  Ghost
+                </button>
+              </div>
+              <Toggle />
+            </Panel>
+
+            <h2 id="inputs">Text input</h2>
+            <Panel>
+              <input type="text" placeholder="Type…" value="" />
+            </Panel>
+
+            <h2 id="editor">Editor</h2>
+            <Panel>
+              <TextEditor />
+            </Panel>
+
+            <h2 id="controls">Controls</h2>
+            <Panel>
+              <Checkbox>
+                Subscribe
+              </Checkbox>
+              <fieldset style="border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; align-items: stretch; width: 100%">
+                <label style="display: flex; flex-direction: row; gap: 8px; align-items: center">
+                  <input type="radio" name="demoChoice" value="1" />
+                  A
+                </label>
+                <label style="display: flex; flex-direction: row; gap: 8px; align-items: center">
+                  <input type="radio" name="demoChoice" value="2" />
+                  B
+                </label>
+              </fieldset>
+              <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
+                Volume
+                <input type="range" min={0} max={100} value={40} />
+              </div>
+              <div style="display: flex; flex-direction: row; gap: 12px; align-items: center">
+                Notify
+                <Toggle />
+              </div>
+            </Panel>
+
+            <h2 id="lists">Lists & tabs</h2>
+            <Panel>
+              <ul style="display: flex; flex-direction: column; width: 100%; max-width: 420px; border: 1px solid #c8c8d2; border-radius: 6px; padding: 8px">
+                <li>
+                  <p>Row A</p>
+                </li>
+                <li>
+                  <p>Row B</p>
+                </li>
+              </ul>
+              <Caption>Tab panels use TabPanel + matching active/id props.</Caption>
+              <TabPanel active={0} id={0}>
+                <p>Tab 1 content</p>
+              </TabPanel>
+              <TabPanel active={0} id={1}>
+                <p>Tab 2 (hidden while active=0)</p>
+              </TabPanel>
+            </Panel>
+
+            <h2 id="dropdown">Select & layout</h2>
+            <Panel>
+              <select value={20}>
+                <option value="10">
+                  Ten
+                </option>
+                <option value="20">
+                  Twenty
+                </option>
+                <option value="30">
+                  Thirty
+                </option>
+              </select>
+              <Tooltip tip="Tooltip">
+                <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
+                  Hover
+                </button>
+              </Tooltip>
+              <Clip>Clipped</Clip>
+              <div style="display: flex; flex-direction: row; width: 100%; align-items: center">
+                Left
+                <Spacer />
+                Right
+              </div>
+            </Panel>
+
+            <h2 id="scroll">Scroll sample</h2>
+            <div style="min-height: 120px; width: 100%; border: 1px solid #d4d7e3; border-radius: 8px; overflow: auto">
+              <div style="display: flex; flex-direction: column; gap: 8px; padding: 8px">
+                <p>Line 1</p>
+                <p>Line 2</p>
+                <p>Line 3</p>
+                <p>Line 4</p>
+                <p>Line 5</p>
+              </div>
+            </div>
+
+            <h2 id="media">Media</h2>
+            <Panel>
+              <SvgView />
+              <ImgDemo />
+            </Panel>
+          </div>
+        </div>
+      </div>
     </ThemeProvider>
   )
 }

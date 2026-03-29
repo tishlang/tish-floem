@@ -4,17 +4,18 @@
 //! (not `style={"..."}` unless you need an arbitrary expression).
 
 use floem::peniko::Color;
+use floem::peniko::color::palette::css;
 use floem::style::Style;
-use floem::text::Weight;
+use floem::text::FontWeight;
 use floem::unit::{PxPct, PxPctAuto};
-use floem::views::{container, empty, Decorators, StackExt};
+use floem::views::{container, empty, h_stack, label, v_stack_from_iter, Decorators, StackExt};
 use floem::AnyView;
 use floem::View;
 use floem::IntoView;
 use floem::taffy::style::{AlignItems, Display, FlexDirection, FlexWrap, JustifyContent};
 use tishlang_core::{ObjectMap, Value};
 
-use crate::{props_string, register_scroll_anchor, value_into_any_view};
+use crate::{props_f64, props_string, register_scroll_anchor, value_into_any_view};
 
 fn norm_key(s: &str) -> String {
     s.chars()
@@ -85,63 +86,25 @@ pub fn scroll_fill_from_style(props: &ObjectMap) -> bool {
     scroll_fill_from_decls(&style_declarations_from_props(props))
 }
 
-/// Keys that control layout / sizing from the parent's perspective — applied to the outer scroll container.
-/// The inner scrollable content must NOT get these: `height: 100%` or `flex: 1` on content means nothing
-/// overflows and scrolling becomes impossible.
-fn is_layout_sizing_key(k: &str) -> bool {
-    matches!(
-        k,
-        "width"
-            | "height"
-            | "minwidth"
-            | "minheight"
-            | "maxwidth"
-            | "maxheight"
-            | "flex"
-            | "flexgrow"
-            | "flexshrink"
-            | "flexbasis"
-            | "flexdirection"
-            | "flexwrap"
-            | "alignself"
-            | "alignitems"
-            | "justifycontent"
-            | "display"
-            | "gap"
-            | "rowgap"
-            | "columngap"
-            | "margin"
-            | "margintop"
-            | "marginright"
-            | "marginbottom"
-            | "marginleft"
-    )
-}
-
-/// Apply only the visual/spacing declarations (padding, background, color, border, …) to `s`.
-/// Skips all layout/sizing properties so the inner scroll content is free to overflow.
-pub fn apply_scroll_content_style(s: Style, props: &ObjectMap) -> Style {
+/// Merge `style` onto the Floem `Scroll` host after programmatic flex-fill defaults.
+///
+/// Applies every declaration [`apply_declarations`] supports except `overflow` / `overflow-x` /
+/// `overflow-y` (the host implements scrolling). That way `width: 100%`, `height: 100%`, `flex`,
+/// `min-width`, etc. from the authored `div` are parsed (`parse_px_pct` / `parse_px_pct_auto`)
+/// and applied instead of being dropped.
+///
+/// **Fill-mode hosts:** [`crate::scroll_host_viewport`] merges this style, then sets `height: auto`
+/// so `height: 100%` cannot collapse the viewport when the flex percentage base is indefinite.
+pub fn merge_scroll_host_style_from_props(s: Style, props: &ObjectMap) -> Style {
     let decls = style_declarations_from_props(props);
-    let visual: Vec<(String, String)> = decls
+    let filtered: Vec<(String, String)> = decls
         .into_iter()
-        .filter(|(k, _)| !is_layout_sizing_key(k.as_str()))
+        .filter(|(k, _)| !is_overflow_style_key(k.as_str()))
         .collect();
-    apply_declarations(s, &visual)
-}
-
-/// For a fill-mode scroll VIEWPORT: apply only the visual frame properties that belong on the
-/// outer scroll container (`background`, `border-radius`, `border`, `border-color`). Width,
-/// height, flex, padding, gap, etc. must NOT be applied — fill-mode sizing comes entirely from
-/// flex layout (`flex-grow: 1; flex-basis: 0`), and `width: 100%` or `height: 100%` from user
-/// style would fight that and break the layout on window resize.
-pub fn apply_scroll_viewport_style(s: Style, props: &ObjectMap) -> Style {
-    let decls = style_declarations_from_props(props);
-    let viewport_keys = ["background", "backgroundcolor", "borderradius", "border", "bordercolor", "borderright"];
-    let viewport: Vec<(String, String)> = decls
-        .into_iter()
-        .filter(|(k, _)| viewport_keys.contains(&k.as_str()))
-        .collect();
-    apply_declarations(s, &viewport)
+    if filtered.is_empty() {
+        return s;
+    }
+    apply_declarations(s, &filtered)
 }
 
 fn scroll_fill_from_decls(decls: &[(String, String)]) -> bool {
@@ -173,6 +136,56 @@ fn scroll_fill_from_decls(decls: &[(String, String)]) -> bool {
         }
     }
     false
+}
+
+fn overflow_value_is_scroll(v: &str) -> bool {
+    matches!(
+        v.trim().to_ascii_lowercase().as_str(),
+        "auto" | "scroll" | "overlay"
+    )
+}
+
+/// `overflow` / `overflow-x` / `overflow-y` of `auto`, `scroll`, or `overlay` → use a scroll viewport (CSS semantics).
+pub fn overflow_enables_scroll(decls: &[(String, String)]) -> bool {
+    decls.iter().any(|(k, v)| {
+        matches!(k.as_str(), "overflow" | "overflowx" | "overflowy") && overflow_value_is_scroll(v)
+    })
+}
+
+pub fn is_overflow_style_key(k: &str) -> bool {
+    matches!(k, "overflow" | "overflowx" | "overflowy")
+}
+
+/// Sizing and margin that belong on the scroll **viewport**; inner stack keeps flex, gap, padding, borders, etc.
+pub fn is_scroll_host_outer_key(k: &str) -> bool {
+    matches!(
+        k,
+        "width"
+            | "height"
+            | "minwidth"
+            | "minheight"
+            | "maxwidth"
+            | "maxheight"
+            | "flex"
+            | "flexgrow"
+            | "flexshrink"
+            | "flexbasis"
+            | "margin"
+            | "margintop"
+            | "marginright"
+            | "marginbottom"
+            | "marginleft"
+    )
+}
+
+pub fn decls_for_scrollable_div_inner(decls: &[(String, String)]) -> Vec<(String, String)> {
+    decls
+        .iter()
+        .cloned()
+        .filter(|(k, _)| {
+            !is_overflow_style_key(k.as_str()) && !is_scroll_host_outer_key(k.as_str())
+        })
+        .collect()
 }
 
 fn parse_px_pct_auto(v: &str) -> Option<PxPctAuto> {
@@ -213,35 +226,35 @@ fn expand_hex3(h: &str) -> Option<(u8, u8, u8)> {
 fn parse_color(v: &str) -> Option<Color> {
     let v = v.trim();
     if v.eq_ignore_ascii_case("transparent") {
-        return Some(Color::TRANSPARENT);
+        return Some(css::TRANSPARENT);
     }
     if let Some(hex) = v.strip_prefix('#') {
         let hex = hex.trim();
         if hex.len() == 3 {
             let (r, g, b) = expand_hex3(hex)?;
-            return Some(Color::rgb8(r, g, b));
+            return Some(Color::from_rgb8(r, g, b));
         }
         if hex.len() == 6 {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(Color::rgb8(r, g, b));
+            return Some(Color::from_rgb8(r, g, b));
         }
         if hex.len() == 8 {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
             let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-            return Some(Color::rgba8(r, g, b, a));
+            return Some(Color::from_rgba8(r, g, b, a));
         }
     }
     match v.to_ascii_lowercase().as_str() {
-        "black" => Some(Color::BLACK),
-        "white" => Some(Color::WHITE),
-        "red" => Some(Color::RED),
-        "green" => Some(Color::GREEN),
-        "blue" => Some(Color::BLUE),
-        "gray" | "grey" => Some(Color::GRAY),
+        "black" => Some(css::BLACK),
+        "white" => Some(css::WHITE),
+        "red" => Some(css::RED),
+        "green" => Some(css::GREEN),
+        "blue" => Some(css::BLUE),
+        "gray" | "grey" => Some(css::GRAY),
         _ => None,
     }
 }
@@ -295,7 +308,7 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                     _ => None,
                 };
                 if let Some(j) = jc {
-                    s = s.justify_content(Some(j));
+                    s = s.justify_content(j);
                 }
             }
             "alignitems" => {
@@ -309,12 +322,12 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                     _ => None,
                 };
                 if let Some(a) = ai {
-                    s = s.align_items(Some(a));
+                    s = s.align_items(a);
                 }
             }
             "gap" => {
                 if let Some(px) = parse_px_pct(v) {
-                    s = s.row_gap(px).column_gap(px);
+                    s = s.row_gap(px).col_gap(px);
                 }
             }
             "rowgap" => {
@@ -324,7 +337,7 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
             }
             "columngap" => {
                 if let Some(px) = parse_px_pct(v) {
-                    s = s.column_gap(px);
+                    s = s.col_gap(px);
                 }
             }
             "padding" => {
@@ -429,12 +442,16 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                             .unwrap_or(1.0);
                         s = s.flex_grow(g).flex_shrink(sh);
                         if let Some(b) = parts.get(2) {
-                            let b = b.trim();
-                            if b == "0" || b == "0%" || b.starts_with("0px") {
-                                s = s.flex_basis(0.0);
+                            if let Some(fb) = parse_px_pct_auto(b.trim()) {
+                                s = s.flex_basis(fb);
                             }
                         }
                     }
+                }
+            }
+            "flexbasis" => {
+                if let Some(fb) = parse_px_pct_auto(v) {
+                    s = s.flex_basis(fb);
                 }
             }
             "flexgrow" => {
@@ -458,7 +475,7 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                     _ => None,
                 };
                 if let Some(a) = ai {
-                    s = s.align_self(Some(a));
+                    s = s.align_self(a);
                 }
             }
             "bordercolor" => {
@@ -507,9 +524,9 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
             "fontweight" => {
                 let vl = v.to_ascii_lowercase();
                 if vl == "bold" || vl == "700" {
-                    s = s.font_weight(Weight::BOLD);
+                    s = s.font_weight(FontWeight::BOLD);
                 } else if vl == "normal" || vl == "400" {
-                    s = s.font_weight(Weight::NORMAL);
+                    s = s.font_weight(FontWeight::NORMAL);
                 }
             }
             _ => {}
@@ -560,31 +577,152 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
 
     let tag_l = tag.to_ascii_lowercase();
     let default_dir = match tag_l.as_str() {
-        "span" => FlexDirection::Row,
-        "p" | "div" | _ => FlexDirection::Column,
+        "span" | "label" => FlexDirection::Row,
+        "p" | "div" | "fieldset" | "ul" | "ol" | "li" | _ => FlexDirection::Column,
     };
 
     let direction = direction_from_decls(&decls, default_dir);
     let anchor_key = props_string(props, &["id"]);
+
+    if tag_l == "ul" || tag_l == "ol" {
+        let is_ordered = tag_l == "ol";
+        let list_style_props = props.clone();
+        let rows: Vec<_> = children
+            .into_iter()
+            .enumerate()
+            .map(|(idx, c)| {
+                let (body_vals, row_idx) = match &c {
+                    Value::Object(o) => {
+                        let m = o.borrow();
+                        let t = m
+                            .get("tag")
+                            .and_then(|v| match v {
+                                Value::String(s) => Some(s.as_ref().to_string()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let ch = match m.get("children") {
+                            Some(Value::Array(a)) => a.borrow().clone(),
+                            _ => vec![],
+                        };
+                        drop(m);
+                        if t.eq_ignore_ascii_case("li") {
+                            (ch, idx)
+                        } else {
+                            (vec![c], idx)
+                        }
+                    }
+                    _ => (vec![c], idx),
+                };
+                let prefix = if is_ordered {
+                    format!("{}. ", row_idx + 1)
+                } else {
+                    "• ".to_string()
+                };
+                let inner: AnyView = if body_vals.len() == 1 {
+                    value_into_any_view(body_vals.into_iter().next().unwrap())
+                } else {
+                    let vs: Vec<_> = body_vals
+                        .into_iter()
+                        .map(|x| value_into_any_view(x).into_view())
+                        .collect();
+                    vs.stack(FlexDirection::Column).into_any()
+                };
+                h_stack((
+                    label(move || prefix.clone()).style(|s| s.min_width(22.0)),
+                    inner.into_view(),
+                ))
+                .style(|s| s.items_start().margin_bottom(4.0))
+                .into_view()
+            })
+            .collect();
+        let stack = v_stack_from_iter(rows).style(move |s| {
+            let mut s = s.display(Display::Flex).flex_direction(FlexDirection::Column);
+            s = apply_declarations(s, &decls);
+            let sizing_from_style = decls.iter().any(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "width" | "flex" | "flexgrow" | "minwidth" | "maxwidth"
+                )
+            });
+            if !sizing_from_style {
+                s = s.width_full();
+            }
+            merge_style_from_props(s, &list_style_props)
+        });
+        if let Some(key) = anchor_key {
+            let c = container(stack).style(|s| s.width_full());
+            register_scroll_anchor(key, c.id());
+            return c.into_any();
+        }
+        return stack.into_any();
+    }
 
     let views: Vec<_> = children
         .into_iter()
         .map(|c| value_into_any_view(c).into_view())
         .collect();
 
+    if tag_l == "div" && overflow_enables_scroll(&decls) {
+        let inner_decl = decls_for_scrollable_div_inner(&decls);
+        let fill = scroll_fill_from_style(props);
+        let min_h = props_f64(props, &["minHeight", "min_height"], 120.0);
+        let inner_decl_clone = inner_decl.clone();
+        let stack = views.stack(direction);
+        let scroll_body = stack.style(move |s| {
+            let mut s = s.display(Display::Flex);
+            s = apply_declarations(s, &inner_decl_clone);
+            // Only suppress width_full() when the author set an explicit concrete width or flex-grow
+            // on the outer scroll div. min-width/max-width are flex resets, not width specs, so we
+            // must NOT count them — otherwise `min-width: 0` (a common flex trick) silently removes
+            // width_full() and collapses the scroll content to a narrow natural width.
+            let explicit_width = inner_decl_clone.iter().any(|(k, _)| {
+                matches!(k.as_str(), "width" | "flex" | "flexgrow")
+            });
+            if !explicit_width || fill {
+                // Fill-mode always gets full width so percentage-width children resolve correctly.
+                s = s.width_full();
+            }
+            if fill {
+                // Scrollable document: keep intrinsic content height (do not shrink to the viewport).
+                s = s.flex_grow(0.0).flex_shrink(0.0);
+            }
+            s
+        });
+        let wrapped = container(scroll_body).style(move |s| {
+            let mut s = s.width_full().display(Display::Flex).flex_col();
+            s = if fill {
+                s.align_items(AlignItems::Stretch)
+            } else {
+                s.items_start()
+            };
+            if fill {
+                s = s.min_height(0.0).flex_grow(0.0).flex_shrink(0.0);
+            } else {
+                s = s.min_height(min_h);
+            }
+            s
+        });
+        let mut out = crate::scroll_host_viewport(props, wrapped.into_any());
+        if let Some(key) = anchor_key {
+            let c = container(out).style(|s| s.width_full());
+            register_scroll_anchor(key, c.id());
+            out = c.into_any();
+        }
+        return out;
+    }
+
     let stack = views.stack(direction);
 
     let body = stack.style(move |s| {
         let mut s = s.display(Display::Flex);
         s = apply_declarations(s, &decls);
-        // Do not force width: 100% when the author uses flex (row children need intrinsic width).
-        let sizing_from_style = decls.iter().any(|(k, _)| {
-            matches!(
-                k.as_str(),
-                "width" | "flex" | "flexgrow" | "minwidth" | "maxwidth"
-            )
+        // Do not force width: 100% when the author sets an explicit width or flex-grow (row
+        // children need intrinsic width). min-width/max-width are flex resets, not width specs.
+        let explicit_width = decls.iter().any(|(k, _)| {
+            matches!(k.as_str(), "width" | "flex" | "flexgrow")
         });
-        if tag_l != "span" && !sizing_from_style {
+        if tag_l != "span" && !explicit_width {
             s = s.width_full();
         }
         if tag_l == "p" {

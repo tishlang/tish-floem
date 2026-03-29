@@ -1,0 +1,29 @@
+// Plain HTML. Under ThemeProvider, panel/sidebar colors come from the host palette (no extra props).
+// Sidebar: do not use height: 100% here — percentage height can collapse inside flex rows.
+
+export fn Panel(props) {
+  return (
+    <section class="panel" style="display: flex; flex-direction: column; width: 100%; backgroundColor: red">
+      {props.children}
+    </section>
+  )
+}
+
+export fn Card(props) {
+  return (
+    <article class="card" style="display: flex; flex-direction: column; width: 100%; backgroundColor: blue">
+      {props.children}
+    </article>
+  )
+}
+
+export fn Sidebar({ width, children }) {
+  return (
+    <div style={`width: ${width}px; background: green`}>
+      <div style="flex: 1; min-height: 0; overflow: auto">
+        {children}
+      </div>
+    </div>
+
+  )
+}

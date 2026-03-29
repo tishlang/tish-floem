@@ -8,7 +8,6 @@ import {
   floem,
   document,
   ThemeProvider,
-  Panel,
   Caption,
   RichText,
   Toggle,
@@ -20,6 +19,7 @@ import {
   SvgView,
   ImgDemo,
 } from "tish:floem"
+import { Panel, Sidebar } from "./Layout.tish"
 import { Spacer } from "./Spacer.tish"
 import { Button } from "./Button.tish"
 
@@ -27,47 +27,45 @@ fn App() {
   return (
 
     <ThemeProvider>
-      <div style="display: flex; flex-direction: row; flex: 1; backgroundColor: blue">
-        <div style="width: 200px; background: green">
-          <div style="flex: 1; width: 200px; overflow: auto; backgroundColor: red">
-            <h1>Kitchen sink</h1>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("top").scrollIntoView()}>
-              TOC (static)
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("overview").scrollIntoView()}>
-              Overview
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("typography").scrollIntoView()}>
-              Typography
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("buttons").scrollIntoView()}>
-              Buttons
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("inputs").scrollIntoView()}>
-              Inputs
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("editor").scrollIntoView()}>
-              Editor
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("controls").scrollIntoView()}>
-              Controls
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("lists").scrollIntoView()}>
-              Lists & tabs
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("dropdown").scrollIntoView()}>
-              Select & layout
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("scroll").scrollIntoView()}>
-              Scroll sample
-            </button>
-            <button style="width: 100%; border: none; background: transparent; color: #e6e8ef; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("media").scrollIntoView()}>
-              Media
-            </button>
-          </div>
-        </div>
-        <div style="background: #e6e6e6" scrollRoot={true}>
-          <div style="flex: 1; overflow: auto; backgroundColor: red">
+      <div style="display: flex; flex-direction: row; flex: 1">
+        <Sidebar width={200}>
+          <h1>Kitchen sink</h1>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("top").scrollIntoView()}>
+            TOC (static)
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("overview").scrollIntoView()}>
+            Overview
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("typography").scrollIntoView()}>
+            Typography
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("buttons").scrollIntoView()}>
+            Buttons
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("inputs").scrollIntoView()}>
+            Inputs
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("editor").scrollIntoView()}>
+            Editor
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("controls").scrollIntoView()}>
+            Controls
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("lists").scrollIntoView()}>
+            Lists & tabs
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("dropdown").scrollIntoView()}>
+            Select & layout
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("scroll").scrollIntoView()}>
+            Scroll sample
+          </button>
+          <button style="width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 6px" onClick={() => document.getElementById("media").scrollIntoView()}>
+            Media
+          </button>
+        </Sidebar>
+        <div scrollRoot={true}>
+          <div style="flex: 1; min-height: 0; overflow: auto">
             <div id="top" style="display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #3a404d; background: #14161c; width: 100%">
               <h1>Tish + Floem</h1>
               <p style="color: #a8b0bd; margin: 0">

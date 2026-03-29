@@ -2,6 +2,13 @@
 //!
 //! In JSX, prefer `style="display: flex"` or `style={{ display: "flex", flexDirection: "row" }}`
 //! (not `style={"..."}` unless you need an arbitrary expression).
+//!
+//! **Themed surfaces:** colors come from the same stack as [`ThemeProvider`] (see
+//! `theme_palette_for_vnode` in `lib.rs`) — no separate “theme toggle” on the element.
+//! - `<aside>` → sidebar chrome.
+//! - `<section>` / `<article>` with HTML `class` / `className` containing `panel` or `card` → panel
+//!   chrome. Plain `<section>` / `<article>` without those class tokens are unchanged.
+//! The `style` prop is merged after these baselines.
 
 use floem::peniko::Color;
 use floem::peniko::color::palette::css;
@@ -15,7 +22,62 @@ use floem::IntoView;
 use floem::taffy::style::{AlignItems, Display, FlexDirection, FlexWrap, JustifyContent};
 use tishlang_core::{ObjectMap, Value};
 
-use crate::{props_f64, props_string, register_scroll_anchor, value_into_any_view};
+use crate::{
+    props_f64, props_string, register_scroll_anchor, resolve_appearance, theme_palette_for_vnode,
+    value_into_any_view_impl, ThemePalette,
+};
+
+#[derive(Clone, Copy)]
+enum HtmlThemedSurface {
+    Panel,
+    Sidebar,
+}
+
+fn class_string_from_props(props: &ObjectMap) -> Option<String> {
+    props_string(props, &["class", "className"])
+}
+
+fn html_themed_surface(tag: &str, props: &ObjectMap) -> Option<HtmlThemedSurface> {
+    match tag.to_ascii_lowercase().as_str() {
+        "aside" => Some(HtmlThemedSurface::Sidebar),
+        "section" | "article" => {
+            let cls = class_string_from_props(props)?;
+            let hit = cls
+                .split_whitespace()
+                .map(|w| w.to_ascii_lowercase())
+                .any(|w| w == "panel" || w == "card");
+            if hit {
+                Some(HtmlThemedSurface::Panel)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn themed_panel_surface(s: Style, p: &ThemePalette) -> Style {
+    s.padding(16.0)
+        .margin_bottom(14.0)
+        .border(1.0)
+        .border_color(p.border)
+        .border_radius(10.0)
+        .background(p.panel)
+        .color(p.fg)
+}
+
+fn themed_sidebar_surface(s: Style, p: &ThemePalette) -> Style {
+    s.height_full()
+        .min_height(0.0)
+        .flex_shrink(0.0)
+        .flex_col()
+        .align_items(AlignItems::Stretch)
+        .padding(0.0)
+        .border_right(1.0)
+        .border_color(p.border)
+        .background(p.sidebar)
+        .color(p.fg)
+}
 
 fn norm_key(s: &str) -> String {
     s.chars()
@@ -529,6 +591,11 @@ pub fn apply_declarations(mut s: Style, decls: &[(String, String)]) -> Style {
                     s = s.font_weight(FontWeight::NORMAL);
                 }
             }
+            "fontfamily" => {
+                if !v.is_empty() {
+                    s = s.font_family(v.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -574,11 +641,14 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
     if display_is_none(&decls) {
         return container(empty()).style(|s| s.hide()).into_any();
     }
+    let child_inh = Some(resolve_appearance(props));
 
     let tag_l = tag.to_ascii_lowercase();
     let default_dir = match tag_l.as_str() {
-        "span" | "label" => FlexDirection::Row,
-        "p" | "div" | "fieldset" | "ul" | "ol" | "li" | _ => FlexDirection::Column,
+        "span" | "label" | "nav" => FlexDirection::Row,
+        "p" | "div" | "section" | "article" | "aside" | "fieldset" | "ul" | "ol" | "li" | _ => {
+            FlexDirection::Column
+        }
     };
 
     let direction = direction_from_decls(&decls, default_dir);
@@ -620,11 +690,14 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
                     "• ".to_string()
                 };
                 let inner: AnyView = if body_vals.len() == 1 {
-                    value_into_any_view(body_vals.into_iter().next().unwrap())
+                    value_into_any_view_impl(
+                        body_vals.into_iter().next().unwrap(),
+                        child_inh.clone(),
+                    )
                 } else {
                     let vs: Vec<_> = body_vals
                         .into_iter()
-                        .map(|x| value_into_any_view(x).into_view())
+                        .map(|x| value_into_any_view_impl(x, child_inh.clone()).into_view())
                         .collect();
                     vs.stack(FlexDirection::Column).into_any()
                 };
@@ -660,7 +733,7 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
 
     let views: Vec<_> = children
         .into_iter()
-        .map(|c| value_into_any_view(c).into_view())
+        .map(|c| value_into_any_view_impl(c, child_inh.clone()).into_view())
         .collect();
 
     if tag_l == "div" && overflow_enables_scroll(&decls) {
@@ -714,15 +787,36 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
 
     let stack = views.stack(direction);
 
+    let style_props = props.clone();
+    let surface = html_themed_surface(&tag_l, props);
+    let decls_styled = decls.clone();
+    let tag_for_width = tag_l.clone();
+
     let body = stack.style(move |s| {
         let mut s = s.display(Display::Flex);
-        s = apply_declarations(s, &decls);
+        if let Some(surf) = surface {
+            let pal = theme_palette_for_vnode(&style_props);
+            s = match surf {
+                HtmlThemedSurface::Panel => themed_panel_surface(s, &pal),
+                HtmlThemedSurface::Sidebar => themed_sidebar_surface(s, &pal),
+            };
+        }
+        s = apply_declarations(s, &decls_styled);
+        // Percent height on `<aside>` after flex merge often collapses to 0; `height_full` matches
+        // ThemeProvider layouts without a second theme attribute.
+        if tag_for_width == "aside"
+            && decls_styled
+                .iter()
+                .any(|(k, v)| k == "height" && v.trim().contains('%'))
+        {
+            s = s.height_full();
+        }
         // Do not force width: 100% when the author sets an explicit width or flex-grow (row
         // children need intrinsic width). min-width/max-width are flex resets, not width specs.
-        let explicit_width = decls.iter().any(|(k, _)| {
+        let explicit_width = decls_styled.iter().any(|(k, _)| {
             matches!(k.as_str(), "width" | "flex" | "flexgrow")
         });
-        if tag_l != "span" && !explicit_width {
+        if tag_for_width != "span" && !explicit_width {
             s = s.width_full();
         }
         s

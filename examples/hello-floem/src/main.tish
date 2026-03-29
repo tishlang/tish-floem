@@ -7,7 +7,7 @@ import { floem } from "tish:floem"
 
 fn App() {
   return (
-    <div style="background: red;">
+    <div style="">
       <h1>Floem + Tish</h1>
       <p>JSX is defined here; `floem.run` maps the vnode tree to Floem views.</p>
       <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; backgroundColor: red">

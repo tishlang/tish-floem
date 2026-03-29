@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/tishlang/tish-floem"
 
 [dependencies]
-floem = { git = "https://github.com/lapce/floem", branch = "main" }
+floem = { path = "../floem" }
 lapce-xi-rope = "0.4.0"
 # Same fork/rev as Floem (for `winit::window::Theme` in theme listeners).
 winit = { git = "https://github.com/lapce/winit", rev = "133268de675a4fda70816d78a7a1435eb972fea1", package = "floem-winit" }

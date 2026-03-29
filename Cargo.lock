@@ -777,7 +777,6 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 [[package]]
 name = "floem"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "bitflags 2.11.0",
  "clipboard-win",
@@ -831,7 +830,6 @@ dependencies = [
 [[package]]
 name = "floem-editor-core"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "bitflags 2.11.0",
  "itertools",
@@ -1075,7 +1073,6 @@ dependencies = [
 [[package]]
 name = "floem_reactive"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "parking_lot",
  "smallvec",
@@ -1084,7 +1081,6 @@ dependencies = [
 [[package]]
 name = "floem_renderer"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "floem-winit",
  "fontique",
@@ -1100,7 +1096,6 @@ dependencies = [
 [[package]]
 name = "floem_tiny_skia_renderer"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "anyhow",
  "floem_renderer",
@@ -1116,7 +1111,6 @@ dependencies = [
 [[package]]
 name = "floem_vger_renderer"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "anyhow",
  "floem-vger",
@@ -3757,7 +3751,6 @@ dependencies = [
 [[package]]
 name = "ui-events-floem-winit"
 version = "0.2.0"
-source = "git+https://github.com/lapce/floem?branch=main#14fa7e912f62a921301af4445c1472d7770e2220"
 dependencies = [
  "dpi 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "floem-winit",

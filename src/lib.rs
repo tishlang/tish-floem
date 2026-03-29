@@ -54,10 +54,6 @@ thread_local! {
     static SCROLL_ANCHOR_VIEWS: RefCell<HashMap<String, ViewId>> = RefCell::new(HashMap::new());
 }
 
-thread_local! {
-    static THEME_APPEARANCE_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
 // Shared selection for `<input type="radio" name="…">` (cleared each commit).
 thread_local! {
     static RADIO_GROUP_SEL: RefCell<HashMap<String, RwSignal<i32>>> = RefCell::new(HashMap::new());
@@ -71,10 +67,6 @@ pub(crate) fn register_scroll_anchor(key: String, id: ViewId) {
 
 fn clear_scroll_anchors() {
     SCROLL_ANCHOR_VIEWS.with(|m| m.borrow_mut().clear());
-}
-
-fn clear_theme_appearance_stack() {
-    THEME_APPEARANCE_STACK.with(|s| s.borrow_mut().clear());
 }
 
 fn clear_radio_groups() {
@@ -95,7 +87,6 @@ impl FloemHost {
 impl Host for FloemHost {
     fn commit_root(&mut self, vnode: &Value) {
         clear_scroll_anchors();
-        clear_theme_appearance_stack();
         clear_radio_groups();
         self.root.set(vnode.clone());
     }
@@ -131,11 +122,10 @@ pub(crate) fn props_string(props: &ObjectMap, keys: &[&str]) -> Option<String> {
     None
 }
 
-/// `appearance` / `theme` on the vnode, else the innermost [`ThemeProvider`] value, else `"system"`.
+/// `appearance` / `theme` on the vnode (including values merged from an ancestor [`ThemeProvider`]),
+/// else `"system"`.
 pub(crate) fn resolve_appearance(props: &ObjectMap) -> String {
-    props_string(props, &["appearance", "theme"])
-        .or_else(|| THEME_APPEARANCE_STACK.with(|st| st.borrow().last().cloned()))
-        .unwrap_or_else(|| "system".to_string())
+    props_string(props, &["appearance", "theme"]).unwrap_or_else(|| "system".to_string())
 }
 
 fn theme_provider_resolved_value(props: &ObjectMap) -> String {
@@ -144,8 +134,18 @@ fn theme_provider_resolved_value(props: &ObjectMap) -> String {
             Some(Value::String(s)) => Some(s.as_ref().to_string()),
             _ => None,
         })
-        .or_else(|| THEME_APPEARANCE_STACK.with(|st| st.borrow().last().cloned()))
         .unwrap_or_else(|| "system".to_string())
+}
+
+/// When a subtree is under [`ThemeProvider`], the resolved appearance is copied onto descendant
+/// vnode props so `style { … }` closures (which run after the provider returns) still see it.
+fn merge_inherited_appearance(mut props: ObjectMap, inherited: Option<&str>) -> ObjectMap {
+    if let Some(inn) = inherited {
+        if props_string(&props, &["appearance", "theme"]).is_none() {
+            props.insert(Arc::from("appearance"), Value::String(inn.to_string().into()));
+        }
+    }
+    props
 }
 
 pub(crate) fn props_f64(props: &ObjectMap, keys: &[&str], default: f64) -> f64 {
@@ -169,12 +169,12 @@ pub(crate) fn props_bool(props: &ObjectMap, keys: &[&str]) -> bool {
 }
 
 #[derive(Clone, Copy)]
-struct ThemePalette {
-    bg: Color,
-    fg: Color,
-    sidebar: Color,
-    border: Color,
-    panel: Color,
+pub(crate) struct ThemePalette {
+    pub(crate) bg: Color,
+    pub(crate) fg: Color,
+    pub(crate) border: Color,
+    pub(crate) panel: Color,
+    pub(crate) sidebar: Color,
 }
 
 fn palette_for_dark(dark: bool) -> ThemePalette {
@@ -182,19 +182,25 @@ fn palette_for_dark(dark: bool) -> ThemePalette {
         ThemePalette {
             bg: Color::from_rgb8(0x1e, 0x22, 0x2a),
             fg: Color::from_rgb8(0xe6, 0xe8, 0xef),
-            sidebar: Color::from_rgb8(0x17, 0x1a, 0x21),
             border: Color::from_rgb8(0x3a, 0x40, 0x4d),
             panel: Color::from_rgb8(0x25, 0x2a, 0x34),
+            sidebar: Color::from_rgb8(0x17, 0x1a, 0x21),
         }
     } else {
         ThemePalette {
             bg: Color::from_rgb8(0xf6, 0xf7, 0xfb),
             fg: Color::from_rgb8(0x22, 0x24, 0x2d),
-            sidebar: Color::from_rgb8(0xef, 0xf0, 0xf6),
             border: Color::from_rgb8(0xd4, 0xd7, 0xe3),
             panel: css::WHITE,
+            sidebar: Color::from_rgb8(0xef, 0xf0, 0xf6),
         }
     }
+}
+
+/// Resolved [`ThemePalette`] for HTML/CSS elements (honours [`ThemeProvider`] / `appearance` on the vnode).
+pub(crate) fn theme_palette_for_vnode(props: &ObjectMap) -> ThemePalette {
+    let appearance = resolve_appearance(props);
+    palette_for_dark(effective_dark_from_appearance(appearance.as_str()))
 }
 
 fn effective_dark_from_appearance(appearance: &str) -> bool {
@@ -212,13 +218,11 @@ enum Intrinsic {
     HStack,
     Button,
     Divider,
-    Panel,
     Caption,
     TextInput,
     Checkbox,
     Toggle,
     Container,
-    Themebox,
     ThemeProvider,
     Texteditor,
     Tooltip,
@@ -235,13 +239,11 @@ fn intrinsic_for_tag(tag: &str) -> Option<Intrinsic> {
         "hstack" | "h-stack" | "row" => Some(Intrinsic::HStack),
         "button" => Some(Intrinsic::Button),
         "divider" | "separator" => Some(Intrinsic::Divider),
-        "panel" | "card" | "section" => Some(Intrinsic::Panel),
         "caption" | "subtitle" => Some(Intrinsic::Caption),
         "textinput" | "text-input" => Some(Intrinsic::TextInput),
         "checkbox" => Some(Intrinsic::Checkbox),
         "toggle" | "switch" => Some(Intrinsic::Toggle),
         "container" | "box" => Some(Intrinsic::Container),
-        "themebox" => Some(Intrinsic::Themebox),
         "themeprovider" => Some(Intrinsic::ThemeProvider),
         "texteditor" | "codeeditor" => Some(Intrinsic::Texteditor),
         "tooltip" => Some(Intrinsic::Tooltip),
@@ -352,11 +354,13 @@ fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floe
         _ => 13.0,
     };
     let lbl = label(move || text.clone()).style(move |s| {
+        let p = theme_palette_for_vnode(&style_props);
         let s = s
             .font_size(size)
             .font_bold()
             .line_height(1.25)
-            .width_full();
+            .width_full()
+            .color(p.fg);
         html_css::merge_style_from_props(s, &style_props)
     });
     if let Some(key) = anchor_key {
@@ -508,79 +512,20 @@ fn dropdown_options(children: &[Value]) -> Vec<i32> {
     out
 }
 
-fn themebox_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
-    let zone = props_string(props, &["zone", "role"])
-        .unwrap_or_else(|| "main".to_string())
-        .to_ascii_lowercase();
-    let appearance = resolve_appearance(props);
-    let width_px = props_f64(props, &["width", "widthPx"], 0.0);
-    let anchor_key = props_string(props, &["id"]);
-
-    let body: AnyView = if children.len() == 1 {
-        value_into_any_view(children.into_iter().next().unwrap())
-    } else {
-        v_stack_dyn_children(children).into_any()
-    };
-
-    let c = container(body).style(move |s| {
-        let dark = effective_dark_from_appearance(appearance.as_str());
-        let p = palette_for_dark(dark);
-        let mut s = s.width_full();
-        if width_px > 0.0 {
-            s = s.width(width_px);
-        }
-        match zone.as_str() {
-            "sidebar" => s
-                .height_full()
-                .min_height(0.0)
-                .flex_shrink(0.0)
-                .flex_col()
-                .align_items(AlignItems::Stretch)
-                .padding(0.0)
-                .border_right(1.0)
-                .border_color(p.border)
-                .background(p.sidebar),
-            "header" => s
-                .padding_horiz(16.0)
-                .padding_vert(12.0)
-                .border_bottom(1.0)
-                .border_color(p.border)
-                .background(if dark {
-                    Color::from_rgb8(0x14, 0x16, 0x1c)
-                } else {
-                    Color::from_rgb8(0xf0, 0xf1, 0xf6)
-                }),
-            "card" | "panel" => s
-                .padding(16.0)
-                .margin_bottom(14.0)
-                .border(1.0)
-                .border_color(p.border)
-                .border_radius(10.0)
-                .background(p.panel),
-            _ => s.padding_horiz(8.0).padding_vert(8.0).background(p.bg).min_height_full(),
-        }
-    });
-    if let Some(key) = anchor_key {
-        register_scroll_anchor(key, c.id());
-    }
-    c.into_any()
-}
-
 fn theme_provider_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let eff = theme_provider_resolved_value(props);
-    THEME_APPEARANCE_STACK.with(|st| st.borrow_mut().push(eff));
-
+    let pass = Some(eff.clone());
     let inner: AnyView = match children.len() {
         0 => empty().into_any(),
-        1 => value_into_any_view(children.into_iter().next().unwrap()),
-        _ => v_stack_from_iter(children.into_iter().map(|c| value_into_any_view(c).into_view()))
-            .style(|s| s.size_full())
-            .into_any(),
+        1 => value_into_any_view_impl(children.into_iter().next().unwrap(), pass),
+        _ => v_stack_from_iter(
+            children
+                .into_iter()
+                .map(|c| value_into_any_view_impl(c, pass.clone()).into_view()),
+        )
+        .style(|s| s.size_full())
+        .into_any(),
     };
-
-    THEME_APPEARANCE_STACK.with(|st| {
-        st.borrow_mut().pop();
-    });
 
     // Layout-transparent wrapper: fills the parent and establishes a flex-column context so
     // children can use either `flex: 1` (to grow along the column axis) or `width/height: 100%`
@@ -661,10 +606,11 @@ fn texteditor_view(props: &ObjectMap) -> AnyView {
 
 fn tooltip_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     let tip = props_string(props, &["tip", "title", "label"]).unwrap_or_else(|| "Tooltip".to_string());
+    let ch_inh = Some(resolve_appearance(props));
     let child = if children.len() == 1 {
-        value_into_any_view(children.into_iter().next().unwrap())
+        value_into_any_view_impl(children.into_iter().next().unwrap(), ch_inh.clone())
     } else {
-        v_stack_dyn_children(children).into_any()
+        v_stack_dyn_children_inherit(children, ch_inh).into_any()
     };
     tooltip(
         child,
@@ -697,11 +643,12 @@ fn imgdemo_view() -> AnyView {
         .into_any()
 }
 
-fn clip_view(children: Vec<Value>) -> AnyView {
+fn clip_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
+    let ch_inh = Some(resolve_appearance(props));
     let inner = if children.len() == 1 {
-        value_into_any_view(children.into_iter().next().unwrap())
+        value_into_any_view_impl(children.into_iter().next().unwrap(), ch_inh.clone())
     } else {
-        v_stack_dyn_children(children).into_any()
+        v_stack_dyn_children_inherit(children, ch_inh).into_any()
     };
     clip(container(inner).style(|s| s.padding(8.0)))
         .style(|s| s.width_full().max_width(320.0).height(48.0).border(1.0))
@@ -715,10 +662,11 @@ fn tabpanel_view(props: &ObjectMap, children: Vec<Value>) -> AnyView {
     if active != id {
         return container(empty()).style(|s| s.hide()).into_any();
     }
+    let ch_inh = Some(resolve_appearance(props));
     let body: AnyView = if children.len() == 1 {
-        value_into_any_view(children.into_iter().next().unwrap())
+        value_into_any_view_impl(children.into_iter().next().unwrap(), ch_inh.clone())
     } else {
-        v_stack_dyn_children(children).into_any()
+        v_stack_dyn_children_inherit(children, ch_inh).into_any()
     };
     container(body)
         .style(|s| s.width_full().padding(8.0))
@@ -774,14 +722,29 @@ fn apply_stack_style(s: floem::style::Style, props: &ObjectMap) -> floem::style:
 }
 
 pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
+    value_into_any_view_impl(v, None)
+}
+
+pub(crate) fn value_into_any_view_impl(
+    v: Value,
+    inherited_appearance: Option<String>,
+) -> floem::AnyView {
     match v {
         Value::String(s) => {
             let t = s.as_ref().trim().to_string();
             if t.is_empty() {
                 label(|| "").into_any()
             } else {
+                let inh = inherited_appearance.clone();
                 label(move || t.clone())
-                    .style(|s| s.font_size(14.0))
+                    .style(move |s| {
+                        let mut m = ObjectMap::default();
+                        if let Some(ref a) = inh {
+                            m.insert(Arc::from("appearance"), Value::String(a.clone().into()));
+                        }
+                        let p = theme_palette_for_vnode(&m);
+                        s.font_size(14.0).color(p.fg)
+                    })
                     .into_any()
             }
         }
@@ -790,12 +753,13 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
             if is_fragment_object(&map) {
                 let ch = vnode_children(&map);
                 drop(map);
-                return v_stack_dyn_children(ch).into_any();
+                return v_stack_dyn_children_inherit(ch, inherited_appearance).into_any();
             }
             let tag = map.get("tag").cloned();
-            let props = vnode_props(&map);
+            let props_raw = vnode_props(&map);
             let children = vnode_children(&map);
             drop(map);
+            let props = merge_inherited_appearance(props_raw, inherited_appearance.as_deref());
 
             match tag {
                 Some(Value::String(t)) if t.as_ref() == "text" => text_view(&children, &props),
@@ -803,7 +767,8 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
                     let name_ref = t.as_ref();
                     if matches!(
                         name_ref,
-                        "div" | "span" | "p" | "ul" | "ol" | "li" | "label" | "fieldset"
+                        "div" | "span" | "p" | "section" | "article" | "aside" | "nav" | "ul" | "ol"
+                            | "li" | "label" | "fieldset"
                     ) {
                         return html_css::html_element_view(name_ref, &props, children);
                     }
@@ -820,10 +785,11 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
                     if let Some(kind) = intrinsic_for_tag(name.as_str()) {
                         return intrinsic_view(kind, &props, children);
                     }
+                    let pass = Some(resolve_appearance(&props));
                     v_stack((
                         label(move || format!("{}", name))
                             .style(|s| s.font_size(11.0).color(css::GRAY)),
-                        v_stack_dyn_children(children),
+                        v_stack_dyn_children_inherit(children, pass),
                     ))
                     .into_any()
                 }
@@ -835,8 +801,8 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
             let items = a.borrow().clone();
             match items.len() {
                 0 => empty().into_any(),
-                1 => value_into_any_view(items.into_iter().next().unwrap()),
-                _ => v_stack_dyn_children(items).into_any(),
+                1 => value_into_any_view_impl(items.into_iter().next().unwrap(), inherited_appearance),
+                _ => v_stack_dyn_children_inherit(items, inherited_appearance).into_any(),
             }
         }
         _ => label(|| "").into_any(),
@@ -935,12 +901,13 @@ fn stack_style_h() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy
 
 fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> floem::AnyView {
     let stack_props = props.clone();
+    let ch_inh = Some(resolve_appearance(props));
     match kind {
         Intrinsic::VStack => {
             let stack = v_stack_from_iter(
                 children
                     .into_iter()
-                    .map(|c| value_into_any_view(c).into_view()),
+                    .map(|c| value_into_any_view_impl(c, ch_inh.clone()).into_view()),
             );
             stack
                 .style(move |s| {
@@ -955,7 +922,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             let stack = h_stack_from_iter(
                 children
                     .into_iter()
-                    .map(|c| value_into_any_view(c).into_view()),
+                    .map(|c| value_into_any_view_impl(c, ch_inh.clone()).into_view()),
             );
             stack
                 .style(move |s| {
@@ -975,7 +942,8 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             // Floem applies the same declarations a DOM host would map to CSS.
             let b = button(
                 label(move || cap.clone()).style(move |s| {
-                    html_css::merge_style_from_props(s.font_size(14.0).font_bold(), &label_style_props)
+                    let p = theme_palette_for_vnode(&label_style_props);
+                    html_css::merge_style_from_props(s.font_size(14.0).font_bold().color(p.fg), &label_style_props)
                 }),
             )
             .style(move |s| {
@@ -1003,36 +971,6 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                     };
                     let s = s.height(1.0).width_full().background(c);
                     html_css::merge_style_from_props(s, &divider_style_props)
-                })
-                .into_any()
-        }
-        Intrinsic::Panel => {
-            let appearance = resolve_appearance(props);
-            let body: floem::AnyView = if children.len() == 1 {
-                value_into_any_view(children.into_iter().next().unwrap())
-            } else {
-                v_stack_from_iter(
-                    children
-                        .into_iter()
-                        .map(|c| value_into_any_view(c).into_view()),
-                )
-                .style(stack_style_v())
-                .into_any()
-            };
-            let panel_style_props = props.clone();
-            container(body)
-                .style(move |s| {
-                    let dark = effective_dark_from_appearance(appearance.as_str());
-                    let p = palette_for_dark(dark);
-                    let s = s
-                        .width_full()
-                        .padding(16.0)
-                        .margin_bottom(14.0)
-                        .border(1.0)
-                        .border_color(p.border)
-                        .border_radius(10.0)
-                        .background(p.panel);
-                    html_css::merge_style_from_props(s, &panel_style_props)
                 })
                 .into_any()
         }
@@ -1081,9 +1019,9 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
         }
         Intrinsic::Container => {
             let body: floem::AnyView = if children.len() == 1 {
-                value_into_any_view(children.into_iter().next().unwrap())
+                value_into_any_view_impl(children.into_iter().next().unwrap(), ch_inh.clone())
             } else {
-                v_stack_dyn_children(children).into_any()
+                v_stack_dyn_children_inherit(children, ch_inh.clone()).into_any()
             };
             let container_style_props = props.clone();
             container(body)
@@ -1092,21 +1030,22 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 })
                 .into_any()
         }
-        Intrinsic::Themebox => themebox_view(props, children),
         Intrinsic::ThemeProvider => theme_provider_view(props, children),
         Intrinsic::Texteditor => texteditor_view(props),
         Intrinsic::Tooltip => tooltip_view(props, children),
         Intrinsic::Svgview => svg_view(props),
         Intrinsic::Imgdemo => imgdemo_view(),
-        Intrinsic::Clip => clip_view(children),
+        Intrinsic::Clip => clip_view(props, children),
         Intrinsic::Tabpanel => tabpanel_view(props, children),
         Intrinsic::Richtext => richtext_demo_view(),
     }
 }
 
-fn v_stack_dyn_children(children: Vec<Value>) -> impl IntoView {
-    v_stack_from_iter(children.into_iter().map(|child| value_into_any_view(child).into_view()))
-        .style(|s| s.width_full().items_start().justify_start())
+fn v_stack_dyn_children_inherit(children: Vec<Value>, inherited: Option<String>) -> impl IntoView {
+    v_stack_from_iter(children.into_iter().map(|child| {
+        value_into_any_view_impl(child, inherited.clone()).into_view()
+    }))
+    .style(|s| s.width_full().items_start().justify_start())
 }
 
 /// Run the user `update` callback once (so `createRoot` / hooks run), then open a Floem window.
@@ -1129,7 +1068,11 @@ pub fn floem_run(update: Rc<dyn Fn(&[Value]) -> Value>) {
             move || root.get(),
             move |v| value_into_any_view(v),
         )
-        .style(|s| s.size_full().keyboard_navigable())
+        .style(|s| {
+            s.size_full()
+                .font_family("Helvetica Neue".to_owned())
+                .keyboard_navigable()
+        })
         .on_event(listener::ThemeChanged, move |_cx, t| {
             os_dark.set(Some(*t == Theme::Dark));
             EventPropagation::Continue
@@ -1321,7 +1264,7 @@ fn floem_api_object() -> Value {
 /// (`ns.get(export_name)`) works for every binding without special-casing:
 ///
 /// ```tish
-/// import { floem, document, window, ThemeProvider, Panel } from "tish:floem"
+/// import { floem, document, window, ThemeProvider } from "tish:floem"
 /// ```
 pub fn floem_object() -> Value {
     let mut m = ObjectMap::default();
@@ -1330,7 +1273,6 @@ pub fn floem_object() -> Value {
     m.insert(Arc::from("document"), floem_document_object());
     m.insert(Arc::from("ThemeProvider"), Value::Function(Rc::new(theme_provider_component)));
     // Platform UI primitives (`tish:floem`); HTML-like controls use native tags (`select`, `input`, `div` overflow).
-    m.insert(Arc::from("Panel"), make_vnode_factory("panel"));
     m.insert(Arc::from("Caption"), make_vnode_factory("caption"));
     m.insert(Arc::from("RichText"), make_vnode_factory("richtext"));
     m.insert(Arc::from("Toggle"), make_vnode_factory("toggle"));

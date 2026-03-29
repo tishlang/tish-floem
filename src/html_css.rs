@@ -632,7 +632,7 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
                     label(move || prefix.clone()).style(|s| s.min_width(22.0)),
                     inner.into_view(),
                 ))
-                .style(|s| s.items_start().margin_bottom(4.0))
+                .style(|s| s.items_start())
                 .into_view()
             })
             .collect();
@@ -724,9 +724,6 @@ pub fn html_element_view(tag: &str, props: &ObjectMap, children: Vec<Value>) -> 
         });
         if tag_l != "span" && !explicit_width {
             s = s.width_full();
-        }
-        if tag_l == "p" {
-            s = s.margin_bottom(8.0);
         }
         s
     });

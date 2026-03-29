@@ -1,0 +1,11 @@
+export fn Button(props) {
+    return (
+      <button
+        style="padding: 8px 14px; border-radius: 8px; border: 1px solid #c8c8d2; background: #f0f0f5; color: #222228; font-weight: bold"
+        onClick={props.onClick}
+      >
+        {props.children}
+      </button>
+    )
+  }
+  

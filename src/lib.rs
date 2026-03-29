@@ -268,6 +268,7 @@ fn collect_visible_text(children: &[Value]) -> String {
         .iter()
         .map(|c| match c {
             Value::String(s) => s.as_ref().to_string(),
+            Value::Array(a) => collect_visible_text(&a.borrow()),
             Value::Object(o) => {
                 let b = o.borrow();
                 let is_text = matches!(
@@ -342,19 +343,18 @@ fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floe
     let style_props = props.clone();
     let anchor_key = props_string(props, &["id"]);
     let level = level.clamp(1, 6);
-    let (size, margin_bottom) = match level {
-        1 => (22.0_f32, 8.0_f32),
-        2 => (18.0, 6.0),
-        3 => (16.0, 4.0),
-        4 => (15.0, 4.0),
-        5 => (14.0, 2.0),
-        _ => (13.0, 2.0),
+    let size: f32 = match level {
+        1 => 22.0,
+        2 => 18.0,
+        3 => 16.0,
+        4 => 15.0,
+        5 => 14.0,
+        _ => 13.0,
     };
     let lbl = label(move || text.clone()).style(move |s| {
         let s = s
             .font_size(size)
             .font_bold()
-            .margin_bottom(margin_bottom)
             .line_height(1.25)
             .width_full();
         html_css::merge_style_from_props(s, &style_props)
@@ -371,7 +371,7 @@ fn html_heading_view(level: u8, props: &ObjectMap, children: Vec<Value>) -> floe
 fn caption_view(children: &[Value]) -> floem::AnyView {
     let text = collect_visible_text(children);
     label(move || text.clone())
-        .style(|s| s.font_size(12.0).color(css::GRAY).margin_bottom(8.0))
+        .style(|s| s.font_size(12.0).color(css::GRAY))
         .into_any()
 }
 
@@ -831,6 +831,14 @@ pub(crate) fn value_into_any_view(v: Value) -> floem::AnyView {
             }
         }
         Value::Null => label(|| "").into_any(),
+        Value::Array(a) => {
+            let items = a.borrow().clone();
+            match items.len() {
+                0 => empty().into_any(),
+                1 => value_into_any_view(items.into_iter().next().unwrap()),
+                _ => v_stack_dyn_children(items).into_any(),
+            }
+        }
         _ => label(|| "").into_any(),
     }
 }
@@ -913,18 +921,12 @@ pub(crate) fn scroll_host_viewport(props: &ObjectMap, wrapped_inner: AnyView) ->
 }
 
 fn stack_style_v() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy {
-    |s| {
-        s.width_full()
-            .row_gap(12.0)
-            .items_start()
-            .justify_start()
-    }
+    |s| s.width_full().items_start().justify_start()
 }
 
 fn stack_style_h() -> impl Fn(floem::style::Style) -> floem::style::Style + Copy {
     |s| {
         s.width_full()
-            .col_gap(12.0)
             // Stretch so a flex sibling with `flex: 1; min-height: 0` gets a real viewport height.
             .align_items(AlignItems::Stretch)
             .justify_start()
@@ -977,14 +979,6 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                 }),
             )
             .style(move |s| {
-                let s = s
-                    .padding_horiz(14.0)
-                    .padding_vert(8.0)
-                    .border_radius(8.0)
-                    .border(1.0)
-                    .border_color(Color::from_rgb8(200, 200, 210))
-                    .background(Color::from_rgb8(240, 240, 245))
-                    .color(Color::from_rgb8(34, 34, 40));
                 html_css::merge_style_from_props(s, &button_style_props)
             });
             match handler {
@@ -1007,7 +1001,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
                     } else {
                         Color::from_rgb8(200, 200, 210)
                     };
-                    let s = s.height(1.0).width_full().background(c).margin_vert(12.0);
+                    let s = s.height(1.0).width_full().background(c);
                     html_css::merge_style_from_props(s, &divider_style_props)
                 })
                 .into_any()
@@ -1083,7 +1077,6 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             let on = create_rw_signal(false);
             toggle_button(move || on.get())
                 .on_event_stop(ToggleChanged::listener(), move |_cx, v| on.set(*v))
-                .style(|s| s.margin_vert(8.0))
                 .into_any()
         }
         Intrinsic::Container => {
@@ -1095,7 +1088,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
             let container_style_props = props.clone();
             container(body)
                 .style(move |s| {
-                    html_css::merge_style_from_props(s.width_full().padding(4.0), &container_style_props)
+                    html_css::merge_style_from_props(s.width_full(), &container_style_props)
                 })
                 .into_any()
         }
@@ -1113,12 +1106,7 @@ fn intrinsic_view(kind: Intrinsic, props: &ObjectMap, children: Vec<Value>) -> f
 
 fn v_stack_dyn_children(children: Vec<Value>) -> impl IntoView {
     v_stack_from_iter(children.into_iter().map(|child| value_into_any_view(child).into_view()))
-        .style(|s| {
-            s.width_full()
-                .row_gap(20.0)
-                .items_start()
-                .justify_start()
-        })
+        .style(|s| s.width_full().items_start().justify_start())
 }
 
 /// Run the user `update` callback once (so `createRoot` / hooks run), then open a Floem window.

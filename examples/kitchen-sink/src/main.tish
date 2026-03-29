@@ -21,6 +21,7 @@ import {
   ImgDemo,
 } from "tish:floem"
 import { Spacer } from "./Spacer.tish"
+import { Button } from "./Button.tish"
 
 fn App() {
   return (
@@ -88,11 +89,18 @@ fn App() {
 
             <h2 id="buttons">Buttons</h2>
             <Panel>
+              <p>Tish Button component (padding lives in the component):</p>
+              <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap">
+                <Button onClick={() => console.log("clicked")}>Default</Button>
+                <Button onClick={() => console.log("clicked")}>Save</Button>
+                <Button onClick={() => console.log("clicked")}>Cancel</Button>
+              </div>
+              <p>Raw button tag (inline style drives padding):</p>
               <div style="display: flex; flex-direction: row; gap: 12px; align-items: center; flex-wrap: wrap">
                 <button style="padding: 8px 14px; border-radius: 8px; border: none; background: #3b82f6; color: #fff" onClick={() => console.log("clicked")}>
                   Primary
                 </button>
-                <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #2242d">
+                <button style="padding: 8px 14px; border-radius: 8px; border: none; background: transparent; color: #222228">
                   Ghost
                 </button>
               </div>
